@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+pandas
+numpy
+scipy
+scikit-learn
+plotly
+fpdf
+streamlit
+pydantic
+requests
+python-multipart
+kaleido
+httpx
