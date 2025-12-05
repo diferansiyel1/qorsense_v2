@@ -51,8 +51,8 @@ async def analyze_sensor(data: SensorDataInput):
         
         noise_std = float(np.std(clean_data))
         snr_db = current_analyzer.calc_snr_db(clean_data)
-        hysteresis = current_analyzer.calc_hysteresis(clean_data)
-        hurst, hurst_r2 = current_analyzer.calc_dfa(clean_data)
+        hysteresis, hyst_x, hyst_y = current_analyzer.calc_hysteresis(clean_data)
+        hurst, hurst_r2, dfa_scales, dfa_flucts = current_analyzer.calc_dfa(clean_data)
         
         metrics_dict = {
             "bias": bias,
@@ -60,8 +60,12 @@ async def analyze_sensor(data: SensorDataInput):
             "noise_std": noise_std,
             "snr_db": snr_db,
             "hysteresis": hysteresis,
+            "hysteresis_x": hyst_x,
+            "hysteresis_y": hyst_y,
             "hurst": hurst,
-            "hurst_r2": hurst_r2
+            "hurst_r2": hurst_r2,
+            "dfa_scales": dfa_scales,
+            "dfa_fluctuations": dfa_flucts
         }
         
         # Health Score

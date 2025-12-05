@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, use } from 'react';
+import { useState, use, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,32 +14,66 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 
-// Mock Data Generators
-const generateSignalData = () =>
-    Array.from({ length: 100 }, (_, i) => ({
-        time: i,
-        raw: Math.sin(i * 0.2) + Math.random() * 0.5,
-        filtered: Math.sin(i * 0.2)
-    }));
-
-const generateTrendData = () =>
-    Array.from({ length: 30 }, (_, i) => ({
-        day: i + 1,
-        value: 0.5 + (i * 0.02) + (Math.random() * 0.1)
-    }));
-
-const dataSignal = generateSignalData();
-const dataTrend = generateTrendData();
+// Mock Data removed in favor of API fetching
 
 export default function SensorDetailPage(props: { params: Promise<{ id: string }> }) {
     // Unwrap params using React.use()
     const params = use(props.params);
+    const sensorId = params.id;
     const [activeTab, setActiveTab] = useState<'diagnosis' | 'signal' | 'expert'>('diagnosis');
     const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 
+    // State for Real Data
+    const [analysisResult, setAnalysisResult] = useState<any>(null); // Using any for speed, ideally typed
+    const [loading, setLoading] = useState(true);
+
+    // Initial Fetch
+    // We will simulate fetching specific sensor data type based on ID
+    // ID 1: Normal, ID 2: Drifting, ID 3: Noisy
+    useEffect(() => {
+        const fetchData = async () => {
+            setLoading(true);
+            try {
+                let syntheticType = 'Normal';
+                if (sensorId === '2') syntheticType = 'Drifting';
+                if (sensorId === '3') syntheticType = 'Oscillation';
+
+                // 1. Get Synthetic Data (Simulating hardware)
+                const dataRes = await fetch('http://localhost:8000/generate-synthetic', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: syntheticType, length: 150 })
+                });
+                const dataJson = await dataRes.json();
+
+                // 2. Analyze it
+                const analyzeRes = await fetch('http://localhost:8000/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sensor_id: sensorId,
+                        sensor_type: 'pH',
+                        values: dataJson.data
+                    })
+                });
+                const result = await analyzeRes.json();
+                setAnalysisResult(result);
+            } catch (error) {
+                console.error("Failed to fetch data:", error);
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchData();
+    }, [sensorId]);
+
     // Mock Sensor Info based on ID
-    const sensorId = params.id;
-    const isCritical = sensorId === '3';
+    const isCritical = analysisResult ? analysisResult.status === 'Red' : false;
+    const healthDetails = analysisResult ? {
+        score: analysisResult.health_score,
+        status: analysisResult.status,
+        diagnosis: analysisResult.diagnosis
+    } : { score: 0, status: 'Grey', diagnosis: 'Loading...' };
 
     // Logic to simulate different types based on ID
     const getSensorType = (id: string) => {
@@ -51,11 +85,7 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
 
     const sensorInfo = getSensorType(sensorId);
 
-    // Status Logic
-    const rulDays = isCritical ? 3 : 14;
-    const healthScore = isCritical ? 45 : 72;
-    const statusColor = isCritical ? 'text-status-red' : 'text-status-yellow';
-    const statusBg = isCritical ? 'bg-status-red/10 border-status-red/20' : 'bg-status-yellow/10 border-status-yellow/20';
+
 
     return (
         <div className="min-h-screen bg-background pb-20">
@@ -102,13 +132,13 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                     </div>
 
                     {/* RUL Counter */}
-                    <Card className={`text-center flex flex-col justify-center py-6 border-2 ${statusBg}`}>
+                    <Card className={`text-center flex flex-col justify-center py-6 border-2 ${healthDetails.status === 'Red' ? 'bg-status-red/10 border-status-red/20' : 'bg-status-yellow/10 border-status-yellow/20'}`}>
                         <div className="text-sm uppercase tracking-widest text-muted-foreground font-semibold mb-1">Estimated Drift Limit (RUL)</div>
-                        <div className={`text-6xl font-black ${statusColor} tracking-tighter`}>
-                            {rulDays} <span className="text-xl font-normal text-muted-foreground">Days</span>
+                        <div className={`text-4xl font-black ${healthDetails.status === 'Red' ? 'text-status-red' : 'text-status-yellow'} tracking-tighter`}>
+                            {loading ? "..." : (analysisResult?.prediction || "Unknown")}
                         </div>
                         <div className="mt-2 text-sm text-foreground/80 font-medium">
-                            {isCritical ? "⚠️ Calibration/Replacement Required" : "Signal Drift Detected"}
+                            {healthDetails.status === 'Red' ? "⚠️ Calibration/Replacement Required" : (analysisResult?.prediction?.includes('day') ? "Signal Drift Predicted" : "Stable Operation")}
                         </div>
                     </Card>
                 </div>
@@ -124,28 +154,21 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                                 <div>
                                     <div className="flex justify-between text-sm mb-1">
                                         <span className="text-muted-foreground">Overall Score</span>
-                                        <span className={`font-bold ${statusColor}`}>{healthScore}%</span>
+                                        <span className={`font-bold ${healthDetails.status === 'Red' ? 'text-status-red' : healthDetails.status === 'Yellow' ? 'text-status-yellow' : 'text-status-green'}`}>
+                                            {loading ? '-' : healthDetails.score.toFixed(1)}%
+                                        </span>
                                     </div>
                                     <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
-                                        <div className={`h-full ${isCritical ? 'bg-status-red' : 'bg-status-yellow'}`} style={{ width: `${healthScore}%` }}></div>
+                                        <div className={`h-full ${healthDetails.status === 'Red' ? 'bg-status-red' : healthDetails.status === 'Yellow' ? 'bg-status-yellow' : 'bg-status-green'}`} style={{ width: `${healthDetails.score}%` }}></div>
                                     </div>
                                 </div>
                                 <div>
                                     <div className="flex justify-between text-sm mb-1">
                                         <span className="text-muted-foreground">Signal Noise (SNR)</span>
-                                        <span className="font-bold text-foreground">12 dB</span>
+                                        <span className="font-bold text-foreground">{loading ? '-' : analysisResult?.metrics.snr_db.toFixed(1)} dB</span>
                                     </div>
                                     <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
-                                        <div className="h-full bg-status-yellow" style={{ width: '65%' }}></div>
-                                    </div>
-                                </div>
-                                <div>
-                                    <div className="flex justify-between text-sm mb-1">
-                                        <span className="text-muted-foreground">Response Time</span>
-                                        <span className="font-bold text-foreground">1.8s</span>
-                                    </div>
-                                    <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
-                                        <div className="h-full bg-status-green" style={{ width: '90%' }}></div>
+                                        <div className="h-full bg-status-yellow" style={{ width: `${Math.min(100, (analysisResult?.metrics.snr_db || 0) * 2)}%` }}></div>
                                     </div>
                                 </div>
                             </CardContent>
@@ -157,7 +180,7 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                                 <div>
                                     <h4 className="font-bold text-primary text-sm">AI Diagnosis</h4>
                                     <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
-                                        Analysis indicates <span className="text-foreground font-semibold">membrane fouling</span> or electrode aging. Impedance shift detected in high-frequency spectrum.
+                                        {loading ? "Analyzing sensor signature..." : (healthDetails.diagnosis || "System optimal.")}
                                     </p>
                                 </div>
                             </CardContent>
@@ -198,13 +221,15 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                                             <TrendingUp className="w-5 h-5 text-status-yellow" />
                                             Signal Stability / Drift
                                         </h3>
-                                        <Badge variant="outline" className="border-status-yellow text-status-yellow bg-status-yellow/5">Drift Warning</Badge>
+                                        <Badge variant="outline" className={`border-${healthDetails.status === 'Red' ? 'status-red' : 'status-yellow'} text-${healthDetails.status === 'Red' ? 'status-red' : 'status-yellow'} bg-${healthDetails.status === 'Red' ? 'status-red' : 'status-yellow'}/5`}>
+                                            {healthDetails.diagnosis || "Analyzing..."}
+                                        </Badge>
                                     </div>
                                     <div className="h-[300px] w-full">
                                         <ResponsiveContainer width="100%" height="100%">
-                                            <LineChart data={dataTrend}>
+                                            <LineChart data={analysisResult?.metrics.hysteresis_x ? analysisResult.metrics.hysteresis_x.map((_, i) => ({ index: i, value: analysisResult.metrics.hysteresis_y[i] })) : []}>
                                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#2D3748" />
-                                                <XAxis dataKey="day" stroke="#94a3b8" tickLine={false} axisLine={false} />
+                                                <XAxis dataKey="index" stroke="#94a3b8" tickLine={false} axisLine={false} />
                                                 <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} domain={['auto', 'auto']} />
                                                 <Tooltip
                                                     contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px' }}
@@ -215,7 +240,7 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                                         </ResponsiveContainer>
                                     </div>
                                     <div className="p-4 bg-muted/50 rounded-lg border border-border text-sm">
-                                        <p>The signal variance has increased by <strong>15%</strong>. This pattern is characteristic of <strong>drying electrolyte</strong> or <strong>coating on the sensor tip</strong>.</p>
+                                        <p>Diagnosis: <strong>{analysisResult?.diagnosis}</strong>. Recommendation: <strong>{analysisResult?.recommendation}</strong></p>
                                     </div>
                                 </div>
                             )}
@@ -228,15 +253,14 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                                     </h3>
                                     <div className="h-[300px] w-full">
                                         <ResponsiveContainer width="100%" height="100%">
-                                            <LineChart data={dataSignal}>
+                                            <LineChart data={analysisResult ? analysisResult.metrics.hysteresis_x.map((val, i) => ({ time: i, raw: val })) : []}>
                                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#2D3748" />
                                                 <XAxis dataKey="time" stroke="#94a3b8" tickLine={false} axisLine={false} />
                                                 <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} />
                                                 <Tooltip
                                                     contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px' }}
                                                 />
-                                                <Line type="monotone" dataKey="raw" stroke="#4A5568" strokeWidth={1} dot={false} name="Raw mV" />
-                                                <Line type="monotone" dataKey="filtered" stroke="#00ADB5" strokeWidth={2} dot={false} name="Filtered" />
+                                                <Line type="monotone" dataKey="raw" stroke="#4A5568" strokeWidth={1} dot={false} name="Raw Input" />
                                             </LineChart>
                                         </ResponsiveContainer>
                                     </div>
@@ -245,13 +269,44 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
 
                             {activeTab === 'expert' && (
                                 <div className="space-y-6">
-                                    <h3 className="text-lg font-semibold flex items-center gap-2">
-                                        <Settings className="w-5 h-5 text-primary" />
-                                        Electrochemical Impedance Analysis
-                                    </h3>
-                                    <div className="h-[320px] w-full flex items-center justify-center border border-dashed border-border rounded-lg bg-muted/20">
-                                        <p className="text-muted-foreground">Nyquist Plot Placeholder</p>
-                                        {/* Placeholder for complex Scatter Chart */}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div>
+                                            <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
+                                                <Activity className="w-5 h-5 text-primary" />
+                                                Hysteresis Loop (Phase Plot)
+                                            </h3>
+                                            <div className="h-[300px] w-full border border-border rounded-lg bg-card p-2">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <ScatterChart>
+                                                        <CartesianGrid strokeDasharray="3 3" stroke="#2D3748" />
+                                                        <XAxis type="number" dataKey="x" name="Input" stroke="#94a3b8" label={{ value: 'Signal (t)', position: 'insideBottom', offset: -5 }} />
+                                                        <YAxis type="number" dataKey="y" name="Output" stroke="#94a3b8" label={{ value: 'Signal (t+1)', angle: -90, position: 'insideLeft' }} />
+                                                        <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b' }} />
+                                                        <Scatter name="Hysteresis" data={analysisResult?.metrics.hysteresis_x.map((val, i) => ({ x: val, y: analysisResult.metrics.hysteresis_y[i] }))} fill="#00ADB5" line shape="circle" />
+                                                    </ScatterChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                            <p className="text-xs text-muted-foreground mt-2 text-center">Area: {analysisResult?.metrics.hysteresis.toFixed(4)} (Low = Elastic, High = Viscous/Lag)</p>
+                                        </div>
+
+                                        <div>
+                                            <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
+                                                <TrendingUp className="w-5 h-5 text-primary" />
+                                                DFA Analysis (Fractal)
+                                            </h3>
+                                            <div className="h-[300px] w-full border border-border rounded-lg bg-card p-2">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <ScatterChart>
+                                                        <CartesianGrid strokeDasharray="3 3" stroke="#2D3748" />
+                                                        <XAxis type="number" dataKey="x" name="Log Scale" stroke="#94a3b8" label={{ value: 'Log Scale', position: 'insideBottom', offset: -5 }} />
+                                                        <YAxis type="number" dataKey="y" name="Log Fluctuation" stroke="#94a3b8" label={{ value: 'Log F(n)', angle: -90, position: 'insideLeft' }} />
+                                                        <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b' }} />
+                                                        <Scatter name="DFA Points" data={analysisResult?.metrics.dfa_scales.map((s, i) => ({ x: Math.log(s), y: Math.log(analysisResult.metrics.dfa_fluctuations[i]) }))} fill="#F59E0B" shape="cross" />
+                                                    </ScatterChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                            <p className="text-xs text-muted-foreground mt-2 text-center">Hurst Exponent: {analysisResult?.metrics.hurst.toFixed(2)} (0.5 = Random, &gt;0.5 = Persistent)</p>
+                                        </div>
                                     </div>
                                 </div>
                             )}

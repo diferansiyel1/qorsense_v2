@@ -24,8 +24,12 @@ class AnalysisMetrics(BaseModel):
     noise_std: float
     snr_db: float
     hysteresis: float
+    hysteresis_x: List[float] = []
+    hysteresis_y: List[float] = []
     hurst: float
     hurst_r2: float
+    dfa_scales: List[float] = []
+    dfa_fluctuations: List[float] = []
 
 class AnalysisResult(BaseModel):
     sensor_id: str

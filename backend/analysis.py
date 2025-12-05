@@ -77,12 +77,12 @@ class SensorAnalyzer:
         snr_db = 20 * np.log10(signal_pp / noise_rms)
         return float(snr_db)
 
-    def calc_hysteresis(self, data: np.ndarray) -> float:
+    def calc_hysteresis(self, data: np.ndarray) -> Tuple[float, List[float], List[float]]:
         """
         Calculate Hysteresis based on Area Difference between Rising and Falling edges.
         Simplified Edge Detection.
         """
-        if len(data) < 5: return 0.0
+        if len(data) < 5: return 0.0, [], []
         
         # Smooth heavily to find "edges" (macro movements)
         smooth = pd.Series(data).rolling(window=5, center=True).mean().bfill().ffill().values
@@ -95,7 +95,7 @@ class SensorAnalyzer:
         falling_indices = np.where(diffs < -threshold)[0]
         
         if len(rising_indices) == 0 or len(falling_indices) == 0:
-            return 0.0
+            return 0.0, [], []
             
         avg_rising_val = np.mean(data[rising_indices])
         avg_falling_val = np.mean(data[falling_indices])
@@ -105,23 +105,23 @@ class SensorAnalyzer:
         data_range = np.ptp(data) if np.ptp(data) > 0 else 1.0
         hysteresis_score = abs(avg_rising_val - avg_falling_val) / data_range
         
-        return float(hysteresis_score)
+        return float(hysteresis_score), data.tolist(), smooth.tolist()
 
-    def calc_dfa(self, data: np.ndarray, order: int = 1) -> Tuple[float, float]:
+    def calc_dfa(self, data: np.ndarray, order: int = 1) -> Tuple[float, float, List[float], List[float]]:
         """
         DFA with R^2 calculation.
-        Returns: (hurst, r_squared)
+        Returns: (hurst, r_squared, scales, fluctuations)
         """
         try:
-            if len(data) == 0: return 0.5, 0.0
+            if len(data) == 0: return 0.5, 0.0, [], []
 
             y = np.cumsum(data - np.mean(data))
             N = len(y)
-            if N < 20: return 0.5, 0.0
+            if N < 20: return 0.5, 0.0, [], []
 
             min_scale = 4
             max_scale = N // 4
-            if max_scale < min_scale: return 0.5, 0.0
+            if max_scale < min_scale: return 0.5, 0.0, [], []
             
             scales = np.unique(np.logspace(np.log10(min_scale), np.log10(max_scale), num=20).astype(int))
             scales = scales[scales > order + 2]
@@ -131,7 +131,7 @@ class SensorAnalyzer:
                  scales = np.unique(scales.astype(int))
                  scales = scales[scales > order + 2]
 
-            if len(scales) < 2: return 0.5, 0.0
+            if len(scales) < 2: return 0.5, 0.0, [], []
 
             fluctuations = []
             
@@ -154,19 +154,20 @@ class SensorAnalyzer:
                 f_n = np.sqrt(total_residual_sq / (n_segments * scale))
                 fluctuations.append(f_n)
             
-            valid_idx = np.array(fluctuations) > 1e-10
-            if np.sum(valid_idx) < 3: return 0.5, 0.0
+            fluctuations = np.array(fluctuations)
+            valid_idx = fluctuations > 1e-10
+            if np.sum(valid_idx) < 3: return 0.5, 0.0, [], []
                 
             log_scales = np.log(scales[valid_idx])
-            log_flucts = np.log(np.array(fluctuations)[valid_idx])
+            log_flucts = np.log(fluctuations[valid_idx])
             
             slope, intercept, r_value, p_value, std_err = stats.linregress(log_scales, log_flucts)
             
-            return float(slope), float(r_value**2)
+            return float(slope), float(r_value**2), scales[valid_idx].tolist(), fluctuations[valid_idx].tolist()
             
         except Exception as e:
             logger.warning(f"DFA Calculation Error: {e}")
-            return 0.5, 0.0
+            return 0.5, 0.0, [], []
 
     def get_trend_line(self, data: np.ndarray) -> Dict[str, List[float]]:
         """Generate coordinates for the linear regression line."""
