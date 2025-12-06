@@ -405,26 +405,28 @@ async def root():
 @app.post("/report")
 async def generate_report(request: ReportRequest):
     try:
-        from backend.report_gen import create_pdf, generate_chart_image
+        from backend.report_gen import create_pdf
         from fastapi.responses import FileResponse
         
-        chart_path = None
-        if request.data:
-            chart_path = generate_chart_image(request.data)
+        # We no longer generate chart image separately here, the new engine handles it.
+        # Ensure we have raw data
+        raw_data = request.data if request.data else []
         
         metrics_data = request.metrics.dict()
         metrics_data["sensor_id"] = request.sensor_id
         metrics_data["flags"] = request.flags
         metrics_data["recommendation"] = request.recommendation
         
+        # Pass raw_data directly
         pdf_path = create_pdf(
             metrics=metrics_data,
+            raw_data=raw_data,
             diagnosis=request.diagnosis,
-            health_score=request.health_score,
-            chart_image_path=chart_path
+            health_score=request.health_score
         )
         
         return FileResponse(pdf_path, media_type='application/pdf', filename=f"report_{request.sensor_id}.pdf")
     except Exception as e:
+        logger.error(f"Report generation error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 

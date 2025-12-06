@@ -1,38 +1,28 @@
+
 from PIL import Image
-import numpy as np
-from sklearn.cluster import KMeans
-import sys
+from collections import Counter
 
-def get_dominant_colors(image_path, k=5):
+def get_dominant_colors(image_path, num_colors=10):
     try:
-        img = Image.open(image_path)
-        img = img.resize((150, 150)) # Resize for speed
-        img = img.convert('RGBA')
+        image = Image.open(image_path)
+        image = image.convert('RGBA') # Keep Alpha
+        image = image.resize((100, 100)) # Better resolution
         
-        # Remove transparent background if exists
-        data = np.array(img)
-        r, g, b, a = data[:,:,0], data[:,:,1], data[:,:,2], data[:,:,3]
-        mask = a > 0
-        pixels = np.vstack([r[mask], g[mask], b[mask]]).T
-        
-        if len(pixels) == 0:
-            print("Image is fully transparent.")
-            return []
+        pixels = []
+        for r, g, b, a in image.getdata():
+            if a > 0: # Ignore fully transparent
+                 pixels.append((r, g, b))
 
-        kmeans = KMeans(n_clusters=k, n_init=10)
-        kmeans.fit(pixels)
+        counts = Counter(pixels)
+        dominant = counts.most_common(num_colors)
         
-        colors = kmeans.cluster_centers_
-        hex_colors = []
-        for color in colors:
-            hex_colors.append('#{:02x}{:02x}{:02x}'.format(int(color[0]), int(color[1]), int(color[2])))
+        print(f"Dominant colors for {image_path}:")
+        for color, count in dominant:
+            hex_color = '#{:02x}{:02x}{:02x}'.format(*color)
+            if hex_color not in ['#000000', '#ffffff']: # Filter blacks/whites if needed, but risky
+                print(f"Color: {color}, Hex: {hex_color}, Count: {count}")
             
-        return hex_colors
     except Exception as e:
         print(f"Error: {e}")
-        return []
 
-if __name__ == "__main__":
-    image_path = sys.argv[1]
-    colors = get_dominant_colors(image_path)
-    print("Dominant Colors:", colors)
+get_dominant_colors('backend/assets/logo.png')
