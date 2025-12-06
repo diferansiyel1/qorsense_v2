@@ -13,3 +13,6 @@ python-multipart
 kaleido
 httpx
 reportlab
+sqlalchemy
+aiosqlite
+greenlet

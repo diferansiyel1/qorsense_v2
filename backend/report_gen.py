@@ -14,7 +14,7 @@ def generate_chart_image(data: list) -> str:
     """Generates a static image of the data trend using Plotly."""
     try:
         fig = go.Figure()
-        fig.add_trace(go.Scatter(y=data, mode='lines', name='Sensor Data', line=dict(color='#8b5cf6', width=2)))
+        fig.add_trace(go.Scatter(y=data, mode='lines', name='Sensor Data', line=dict(color='#af5ce0', width=2)))
         fig.update_layout(
             title="Sensor Data Trend",
             xaxis_title="Time Step",
@@ -59,7 +59,7 @@ class QorSenseReportGenerator:
             name='SectionHeader',
             parent=self.styles['Heading2'],
             fontSize=14,
-            textColor=colors.HexColor('#8b5cf6'), # Primary Purple
+            textColor=colors.HexColor('#af5ce0'), # Primary Purple
             spaceBefore=15,
             spaceAfter=10,
             borderPadding=5,
@@ -93,7 +93,7 @@ class QorSenseReportGenerator:
             canvas.drawImage(logo_path, 20*mm, 275*mm, width=40*mm, height=15*mm, preserveAspectRatio=True, mask='auto')
         else:
             canvas.setFont('Helvetica-Bold', 20)
-            canvas.setFillColor(colors.HexColor('#8b5cf6'))
+            canvas.setFillColor(colors.HexColor('#af5ce0'))
             canvas.drawString(20*mm, 280*mm, "QorSense")
 
         # Header Text
@@ -107,7 +107,7 @@ class QorSenseReportGenerator:
         canvas.drawRightString(190*mm, 277*mm, f"Date: {timestamp}")
         
         # Purple Line
-        canvas.setStrokeColor(colors.HexColor('#8b5cf6'))
+        canvas.setStrokeColor(colors.HexColor('#af5ce0'))
         canvas.setLineWidth(2)
         canvas.line(20*mm, 270*mm, 190*mm, 270*mm)
         

@@ -170,7 +170,7 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                                                 {loading ? '-' : healthDetails.score.toFixed(1)}%
                                             </span>
                                         </div>
-                                        <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
+                                        <div className="h-2 w-full rounded-full overflow-hidden">
                                             <div className={`h-full ${healthDetails.status === 'Critical' ? 'bg-status-red' : healthDetails.status === 'Warning' ? 'bg-status-yellow' : 'bg-status-green'}`} style={{ width: `${healthDetails.score}%` }}></div>
                                         </div>
                                     </div>
@@ -179,7 +179,7 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                                             <span className="text-muted-foreground">Signal Noise (SNR)</span>
                                             <span className="font-bold text-foreground">{loading ? '-' : analysisResult?.metrics.snr_db.toFixed(1)} dB</span>
                                         </div>
-                                        <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
+                                        <div className="h-2 w-full rounded-full overflow-hidden">
                                             <div className="h-full bg-status-yellow" style={{ width: `${Math.min(100, (analysisResult?.metrics.snr_db || 0) * 2)}%` }}></div>
                                         </div>
                                     </div>
@@ -247,7 +247,7 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                                                         contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px' }}
                                                     />
                                                     <ReferenceLine y={0.8} stroke="#E53E3E" strokeDasharray="3 3" label={{ value: 'Max Tolerance', fill: '#00ADB', fontSize: 12 }} />
-                                                    <Line type="monotone" dataKey="value" stroke="#00ADB5" strokeWidth={3} dot={{ r: 4, fill: '#0f172a', strokeWidth: 2 }} />
+                                                    <Line type="monotone" dataKey="value" stroke="#af5ce0" strokeWidth={3} dot={{ r: 4, fill: '#0f172a', strokeWidth: 2 }} />
                                                 </LineChart>
                                             </ResponsiveContainer>
                                         </div>
@@ -294,7 +294,7 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                                                             <XAxis type="number" dataKey="x" name="Input" stroke="#94a3b8" label={{ value: 'Signal (t)', position: 'insideBottom', offset: -5 }} />
                                                             <YAxis type="number" dataKey="y" name="Output" stroke="#94a3b8" label={{ value: 'Signal (t+1)', angle: -90, position: 'insideLeft' }} />
                                                             <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b' }} />
-                                                            <Scatter name="Hysteresis" data={analysisResult?.metrics.hysteresis_x.map((val: any, i: number) => ({ x: val, y: analysisResult.metrics.hysteresis_y[i] }))} fill="#00ADB5" line shape="circle" />
+                                                            <Scatter name="Hysteresis" data={analysisResult?.metrics.hysteresis_x.map((val: any, i: number) => ({ x: val, y: analysisResult.metrics.hysteresis_y[i] }))} fill="#af5ce0" line shape="circle" />
                                                         </ScatterChart>
                                                     </ResponsiveContainer>
                                                 </div>

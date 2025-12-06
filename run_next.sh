@@ -5,6 +5,9 @@ echo "Starting QorSense v1 (Next.js Edition)..."
 if [ -d "backend/venv" ]; then
     echo "Using backend virtual environment..."
     UVICORN="backend/venv/bin/uvicorn"
+elif [ -d ".venv" ]; then
+    echo "Using root virtual environment (.venv)..."
+    UVICORN=".venv/bin/uvicorn"
 elif [ -d "venv" ]; then
      echo "Using root virtual environment..."
      UVICORN="venv/bin/uvicorn"

@@ -20,11 +20,11 @@ const config: Config = {
                     foreground: 'hsl(var(--popover-foreground))'
                 },
                 primary: {
-                    DEFAULT: '#00ADB5', // Pikolab Teal
-                    foreground: '#ffffff',
-                    start: '#00ADB5',
-                    end: '#007A80',
-                    accent: '#33BDC3', // Lighter teal
+                    DEFAULT: 'hsl(var(--primary))',
+                    foreground: 'hsl(var(--primary-foreground))',
+                    start: '#af5ce0', // Brand Purple for gradients
+                    end: '#2a44c7',   // Brand Blue for gradients
+                    accent: '#d49bf5', // Lighter purple
                 },
                 secondary: {
                     DEFAULT: 'hsl(var(--secondary))',
@@ -37,21 +37,20 @@ const config: Config = {
                 accent: {
                     DEFAULT: 'hsl(var(--accent))',
                     foreground: 'hsl(var(--accent-foreground))',
-                    blue: '#3182CE',
-                    orange: '#DD6B20',
+                    blue: '#2a44c7',
                 },
                 destructive: {
                     DEFAULT: 'hsl(var(--destructive))',
                     foreground: 'hsl(var(--destructive-foreground))'
                 },
                 status: {
-                    green: '#00C851', // Brighter green for traffic light
-                    yellow: '#FFBB33',
-                    red: '#FF4444',
+                    green: '#10b981', // Standard Emerald
+                    yellow: '#f59e0b', // Amber
+                    red: '#ef4444',    // Red
                 },
                 border: 'hsl(var(--border))',
                 input: 'hsl(var(--input))',
-                ring: '#00ADB5',
+                ring: 'hsl(var(--ring))',
                 chart: {
                     '1': 'hsl(var(--chart-1))',
                     '2': 'hsl(var(--chart-2))',
@@ -59,8 +58,6 @@ const config: Config = {
                     '4': 'hsl(var(--chart-4))',
                     '5': 'hsl(var(--chart-5))'
                 },
-                'slate-gray': '#2D3748', // Keeping for backward compat but might replace
-                'lighter-gray': '#4A5568',
             },
             borderRadius: {
                 lg: 'var(--radius)',
