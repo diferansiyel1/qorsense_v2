@@ -1,18 +1,14 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { SmartSensorCard } from "@/components/SmartSensorCard";
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer, YAxis, CartesianGrid } from 'recharts';
-import { Activity, ShieldAlert, Plus, Microscope } from 'lucide-react';
+import { Activity, ShieldAlert, Microscope } from 'lucide-react';
 import { Button } from "@/components/ui/button";
+import { api, Sensor } from "@/lib/api";
+import { AddSensorModal } from "@/components/AddSensorModal";
 
-const mockSensorsInitially = [
-    { id: '1', name: 'Bioreactor pH Probe 01', healthScore: 98, status: 'Normal' as const },
-    { id: '2', name: 'DO Probe @ Mix Tank', healthScore: 72, status: 'Warning' as const, problem: 'Membrane Fouling' },
-    { id: '3', name: 'Main Line Flowmeter', healthScore: 45, status: 'Critical' as const, problem: 'Signal Noise' },
-    { id: '4', name: 'Feed Pressure TX-101', healthScore: 92, status: 'Normal' as const },
-];
-
+// Mock data ONLY for the aggregate chart for now, as we don't have an aggregate endpoint
 const deviationData = [
     { time: '00:00', value: 0.12 },
     { time: '04:00', value: 0.15 },
@@ -24,24 +20,38 @@ const deviationData = [
 ];
 
 export default function Dashboard() {
-    const [sensors, setSensors] = useState(mockSensorsInitially);
-    const [isAddProbeModalOpen, setIsAddProbeModalOpen] = useState(false);
+    const [sensors, setSensors] = useState<any[]>([]); // Using any to mix Sensor + UI props
+    const [loading, setLoading] = useState(true);
 
-    // Form State
-    const [newProbeName, setNewProbeName] = useState('');
-    const [newProbeType, setNewProbeType] = useState('pH Probe');
+    const fetchSensors = async () => {
+        setLoading(true);
+        try {
+            const data = await api.getSensors();
+            // Map API data to UI compatible format
+            // Since we don't have health/status in Sensor model yet, we mock/defaults
+            const mapped = data.map(s => ({
+                id: s.id,
+                name: s.name,
+                location: s.location,
+                healthScore: s.health_score ?? 0,
+                status: s.status ?? 'Unknown',
+                type: s.source_type
+            }));
+            setSensors(mapped);
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setLoading(false);
+        }
+    };
 
-    const handleAddProbe = () => {
-        const newId = (sensors.length + 1).toString();
-        const newSensor = {
-            id: newId,
-            name: newProbeName || `${newProbeType} ${newId} `,
-            healthScore: 100,
-            status: 'Normal' as const
-        };
-        setSensors([...sensors, newSensor]);
-        setIsAddProbeModalOpen(false);
-        setNewProbeName('');
+    useEffect(() => {
+        fetchSensors();
+    }, []);
+
+    const handleSensorCreated = (newSensor: Sensor) => {
+        // Optimistic update or refetch
+        fetchSensors();
     };
 
     const criticalCount = sensors.filter(s => s.status === 'Critical').length;
@@ -64,19 +74,13 @@ export default function Dashboard() {
                     <div className="flex items-center gap-4">
                         {/* Global Status Pill */}
                         <div className="hidden md:flex items-center gap-3 bg-card border border-border px-4 py-2 rounded-full shadow-sm">
-                            <div className={`w - 3 h - 3 rounded - full ${criticalCount > 0 ? 'bg-status-red animate-pulse' : 'bg-status-green'} `}></div>
+                            <div className={`w-3 h-3 rounded-full ${criticalCount > 0 ? 'bg-status-red animate-pulse' : 'bg-status-green'} `}></div>
                             <span className="font-medium text-sm text-foreground">
                                 {criticalCount > 0 ? "System Attention Required" : "All Systems Nominal"}
                             </span>
                         </div>
 
-                        <Button
-                            className="bg-primary hover:bg-primary-end text-white"
-                            onClick={() => setIsAddProbeModalOpen(true)}
-                        >
-                            <Plus className="w-4 h-4 mr-2" />
-                            Add Probe
-                        </Button>
+                        <AddSensorModal onSensorCreated={handleSensorCreated} />
                     </div>
                 </div>
 
@@ -110,11 +114,20 @@ export default function Dashboard() {
                         <h2 className="text-xl font-semibold text-foreground">Active Instrumentation</h2>
                         <span className="text-sm text-muted-foreground">Total: {sensors.length}</span>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {sensors.map((sensor) => (
-                            <SmartSensorCard key={sensor.id} {...sensor} />
-                        ))}
-                    </div>
+                    {loading ? (
+                        <div className="text-center py-20 text-muted-foreground">Loading sensors...</div>
+                    ) : sensors.length === 0 ? (
+                        <div className="text-center py-20 border border-dashed rounded-lg">
+                            <p className="text-muted-foreground mb-4">No sensors found.</p>
+                            <AddSensorModal onSensorCreated={handleSensorCreated} />
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {sensors.map((sensor) => (
+                                <SmartSensorCard key={sensor.id} {...sensor} />
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {/* Global Deviation Chart */}
@@ -162,55 +175,6 @@ export default function Dashboard() {
                     </div>
                 </div>
             </div>
-
-            {/* Add Probe Modal Overlay */}
-            {isAddProbeModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="bg-card w-full max-w-md rounded-xl border border-border shadow-2xl p-6">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="text-xl font-bold text-white">Add New Probe</h3>
-                            <button onClick={() => setIsAddProbeModalOpen(false)} className="text-muted-foreground hover:text-white">✕</button>
-                        </div>
-
-                        <div className="space-y-4">
-                            <div>
-                                <label className="text-sm font-medium text-muted-foreground block mb-2">Probe Name / Tag</label>
-                                <input
-                                    type="text"
-                                    placeholder="e.g. Tank B pH Sensor"
-                                    className="w-full bg-secondary border-border rounded-md px-3 py-2 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                                    value={newProbeName}
-                                    onChange={(e) => setNewProbeName(e.target.value)}
-                                />
-                            </div>
-
-                            <div>
-                                <label className="text-sm font-medium text-muted-foreground block mb-2">Probe Type</label>
-                                <select
-                                    className="w-full bg-secondary border-border rounded-md px-3 py-2 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                                    value={newProbeType}
-                                    onChange={(e) => setNewProbeType(e.target.value)}
-                                >
-                                    <option value="pH Probe">pH Sensor</option>
-                                    <option value="DO Probe">Dissolved Oxygen (DO)</option>
-                                    <option value="Conductivity">Conductivity Sensor</option>
-                                    <option value="Pressure TX">Pressure Transmitter</option>
-                                    <option value="Flowmeter">Flowmeter</option>
-                                </select>
-                            </div>
-
-                            <div className="flex gap-3 mt-8 pt-4 border-t border-border">
-                                <Button className="flex-1 bg-primary hover:bg-primary-end text-white" onClick={handleAddProbe}>
-                                    Initialize Probe
-                                </Button>
-                                <Button variant="outline" className="flex-1" onClick={() => setIsAddProbeModalOpen(false)}>
-                                    Cancel
-                                </Button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

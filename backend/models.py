@@ -11,6 +11,24 @@ class SensorConfig(BaseModel):
     dfa_critical: float = 0.8
     min_data_points: int = 50
 
+class SensorCreate(BaseModel):
+    name: str
+    location: str
+    source_type: str = "CSV"
+    organization_id: Optional[int] = None
+
+class SensorResponse(BaseModel):
+    id: str
+    name: str
+    location: str
+    source_type: str
+    organization_id: Optional[int] = None
+    health_score: Optional[float] = 0.0
+    status: Optional[str] = "Unknown"
+
+    class Config:
+        from_attributes = True
+
 class SensorDataInput(BaseModel):
     sensor_id: str
     sensor_type: str

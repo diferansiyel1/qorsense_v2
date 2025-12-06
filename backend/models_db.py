@@ -52,6 +52,7 @@ class AnalysisResultDB(Base):
     sensor_id = Column(String, ForeignKey("sensors.id"), index=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
     health_score = Column(Float)
+    status = Column(String) # 'Normal', 'Warning', 'Critical', 'Unknown'
     metrics = Column(JSON) # Stores bias, slope, hysteresis curves, etc.
     diagnosis = Column(Text)
     recommendation = Column(Text)

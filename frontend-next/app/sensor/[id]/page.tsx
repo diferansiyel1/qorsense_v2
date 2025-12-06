@@ -10,9 +10,11 @@ import {
 } from 'recharts';
 import {
     Activity, ArrowLeft, AlertTriangle, Calendar, FileText,
-    CheckCircle, Zap, Settings, TrendingUp, Droplets
+    CheckCircle, Zap, Settings, TrendingUp, Droplets, RefreshCcw
 } from 'lucide-react';
 import Link from 'next/link';
+import { api } from "@/lib/api";
+import { DataUploadModal } from "@/components/DataUploadModal";
 
 // Mock Data removed in favor of API fetching
 
@@ -26,54 +28,47 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
     // State for Real Data
     const [analysisResult, setAnalysisResult] = useState<any>(null); // Using any for speed, ideally typed
     const [loading, setLoading] = useState(true);
+    const [hasData, setHasData] = useState(false);
 
     // Initial Fetch
     // We will simulate fetching specific sensor data type based on ID
     // ID 1: Normal, ID 2: Drifting, ID 3: Noisy
-    useEffect(() => {
-        const fetchData = async () => {
-            setLoading(true);
-            try {
-                let syntheticType = 'Normal';
-                if (sensorId === '2') syntheticType = 'Drifting';
-                if (sensorId === '3') syntheticType = 'Oscillation';
-
-                // 1. Get Synthetic Data (Simulating hardware)
-                const dataRes = await fetch('http://localhost:8000/generate-synthetic', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ type: syntheticType, length: 150 })
-                });
-                const dataJson = await dataRes.json();
-
-                // 2. Analyze it
-                const analyzeRes = await fetch('http://localhost:8000/analyze', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        sensor_id: sensorId,
-                        sensor_type: 'pH',
-                        values: dataJson.data
-                    })
-                });
-                const result = await analyzeRes.json();
-                setAnalysisResult(result);
-            } catch (error) {
+    const fetchData = async () => {
+        setLoading(true);
+        try {
+            // Try to analyze existing data
+            const result = await api.analyzeSensor(sensorId);
+            setAnalysisResult(result);
+            setHasData(true);
+        } catch (error: any) {
+            if (error?.response?.status !== 404) {
                 console.error("Failed to fetch data:", error);
-            } finally {
-                setLoading(false);
             }
-        };
+            // If 404/500, likely no data
+            // Backend throws error if no data found in DB and no values provided
+            setHasData(false);
+            setAnalysisResult(null);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
         fetchData();
     }, [sensorId]);
 
+    const handleUploadSuccess = () => {
+        // Data uploaded, now we can analyze
+        fetchData();
+    };
+
     // Mock Sensor Info based on ID
-    const isCritical = analysisResult ? analysisResult.status === 'Red' : false;
+    const isCritical = analysisResult ? analysisResult.status === 'Critical' : false; // Adjusted from Red to Critical based on prompt/api logic
     const healthDetails = analysisResult ? {
         score: analysisResult.health_score,
         status: analysisResult.status,
         diagnosis: analysisResult.diagnosis
-    } : { score: 0, status: 'Grey', diagnosis: 'Loading...' };
+    } : { score: 0, status: 'Grey', diagnosis: 'No Data' };
 
     // Logic to simulate different types based on ID
     const getSensorType = (id: string) => {
@@ -101,6 +96,7 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                             variant="outline"
                             className="text-status-green border-status-green/50 hover:bg-status-green/10"
                             onClick={() => setIsReportModalOpen(true)}
+                            disabled={!hasData}
                         >
                             <FileText className="w-4 h-4 mr-2" />
                             Generate Calibration Report
@@ -108,6 +104,7 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                         <Button
                             className="bg-primary hover:bg-primary-end text-white"
                             onClick={() => setIsReportModalOpen(true)}
+                            disabled={!hasData}
                         >
                             <Calendar className="w-4 h-4 mr-2" />
                             Schedule Replacement
@@ -122,232 +119,248 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="md:col-span-2 space-y-2">
                         <div className="flex items-center gap-3">
-                            <Badge variant="outline" className="text-muted-foreground border-muted-foreground">TAG: {sensorId}-A2</Badge>
-                            <span className="text-sm font-medium text-muted-foreground">{sensorInfo.type} • Process Line 1</span>
+                            <Badge variant="outline" className="text-muted-foreground border-muted-foreground">ID: {sensorId}</Badge>
+                            {/* We could fetch sensor details separately if we wanted name/type here, for now using ID */}
                         </div>
-                        <h1 className="text-4xl font-bold text-foreground">{sensorInfo.name}</h1>
-                        <p className="text-lg text-muted-foreground max-w-2xl">
-                            Installed: 2024-01-15. Last Calibrated: 2 weeks ago.
-                        </p>
+                        <h1 className="text-4xl font-bold text-foreground">Sensor Analysis</h1>
+                        <div className="flex items-center gap-4 mt-2">
+                            {!hasData && (
+                                <DataUploadModal sensorId={sensorId} onUploadSuccess={handleUploadSuccess} />
+                            )}
+                            <Button variant="ghost" onClick={fetchData} disabled={loading}>
+                                <RefreshCcw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                                Refresh Analysis
+                            </Button>
+                        </div>
                     </div>
 
                     {/* RUL Counter */}
-                    <Card className={`text-center flex flex-col justify-center py-6 border-2 ${healthDetails.status === 'Red' ? 'bg-status-red/10 border-status-red/20' : 'bg-status-yellow/10 border-status-yellow/20'}`}>
-                        <div className="text-sm uppercase tracking-widest text-muted-foreground font-semibold mb-1">Estimated Drift Limit (RUL)</div>
-                        <div className={`text-4xl font-black ${healthDetails.status === 'Red' ? 'text-status-red' : 'text-status-yellow'} tracking-tighter`}>
-                            {loading ? "..." : (analysisResult?.prediction || "Unknown")}
-                        </div>
-                        <div className="mt-2 text-sm text-foreground/80 font-medium">
-                            {healthDetails.status === 'Red' ? "⚠️ Calibration/Replacement Required" : (analysisResult?.prediction?.includes('day') ? "Signal Drift Predicted" : "Stable Operation")}
-                        </div>
-                    </Card>
+                    {hasData && (
+                        <Card className={`text-center flex flex-col justify-center py-6 border-2 ${healthDetails.status === 'Critical' ? 'bg-status-red/10 border-status-red/20' : 'bg-status-yellow/10 border-status-yellow/20'}`}>
+                            <div className="text-sm uppercase tracking-widest text-muted-foreground font-semibold mb-1">Estimated Drift Limit (RUL)</div>
+                            <div className={`text-4xl font-black ${healthDetails.status === 'Critical' ? 'text-status-red' : 'text-status-yellow'} tracking-tighter`}>
+                                {loading ? "..." : (analysisResult?.prediction || "Unknown")}
+                            </div>
+                            <div className="mt-2 text-sm text-foreground/80 font-medium">
+                                {healthDetails.status === 'Critical' ? "⚠️ Calibration/Replacement Required" : (analysisResult?.prediction?.includes('day') ? "Signal Drift Predicted" : "Stable Operation")}
+                            </div>
+                        </Card>
+                    )}
                 </div>
 
-                {/* Main Content Areas */}
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+                {!hasData ? (
+                    <div className="flex flex-col items-center justify-center py-20 border border-dashed rounded-xl bg-card/50">
+                        <AlertTriangle className="w-16 h-16 text-muted-foreground mb-4" />
+                        <h2 className="text-xl font-semibold mb-2">Waiting for Data...</h2>
+                        <p className="text-muted-foreground mb-6">Please upload a CSV file to begin analysis.</p>
+                        <DataUploadModal sensorId={sensorId} onUploadSuccess={handleUploadSuccess} />
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
 
-                    {/* Sidebar / Vitals */}
-                    <div className="space-y-4">
-                        <Card>
-                            <CardHeader className="uppercase text-xs font-bold text-muted-foreground tracking-wider pb-2">Sensor Health</CardHeader>
-                            <CardContent className="space-y-6">
-                                <div>
-                                    <div className="flex justify-between text-sm mb-1">
-                                        <span className="text-muted-foreground">Overall Score</span>
-                                        <span className={`font-bold ${healthDetails.status === 'Red' ? 'text-status-red' : healthDetails.status === 'Yellow' ? 'text-status-yellow' : 'text-status-green'}`}>
-                                            {loading ? '-' : healthDetails.score.toFixed(1)}%
-                                        </span>
+                        {/* Sidebar / Vitals */}
+                        <div className="space-y-4">
+                            <Card>
+                                <CardHeader className="uppercase text-xs font-bold text-muted-foreground tracking-wider pb-2">Sensor Health</CardHeader>
+                                <CardContent className="space-y-6">
+                                    <div>
+                                        <div className="flex justify-between text-sm mb-1">
+                                            <span className="text-muted-foreground">Overall Score</span>
+                                            <span className={`font-bold ${healthDetails.status === 'Critical' ? 'text-status-red' : healthDetails.status === 'Warning' ? 'text-status-yellow' : 'text-status-green'}`}>
+                                                {loading ? '-' : healthDetails.score.toFixed(1)}%
+                                            </span>
+                                        </div>
+                                        <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
+                                            <div className={`h-full ${healthDetails.status === 'Critical' ? 'bg-status-red' : healthDetails.status === 'Warning' ? 'bg-status-yellow' : 'bg-status-green'}`} style={{ width: `${healthDetails.score}%` }}></div>
+                                        </div>
                                     </div>
-                                    <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
-                                        <div className={`h-full ${healthDetails.status === 'Red' ? 'bg-status-red' : healthDetails.status === 'Yellow' ? 'bg-status-yellow' : 'bg-status-green'}`} style={{ width: `${healthDetails.score}%` }}></div>
+                                    <div>
+                                        <div className="flex justify-between text-sm mb-1">
+                                            <span className="text-muted-foreground">Signal Noise (SNR)</span>
+                                            <span className="font-bold text-foreground">{loading ? '-' : analysisResult?.metrics.snr_db.toFixed(1)} dB</span>
+                                        </div>
+                                        <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
+                                            <div className="h-full bg-status-yellow" style={{ width: `${Math.min(100, (analysisResult?.metrics.snr_db || 0) * 2)}%` }}></div>
+                                        </div>
                                     </div>
-                                </div>
-                                <div>
-                                    <div className="flex justify-between text-sm mb-1">
-                                        <span className="text-muted-foreground">Signal Noise (SNR)</span>
-                                        <span className="font-bold text-foreground">{loading ? '-' : analysisResult?.metrics.snr_db.toFixed(1)} dB</span>
-                                    </div>
-                                    <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
-                                        <div className="h-full bg-status-yellow" style={{ width: `${Math.min(100, (analysisResult?.metrics.snr_db || 0) * 2)}%` }}></div>
-                                    </div>
-                                </div>
-                            </CardContent>
-                        </Card>
+                                </CardContent>
+                            </Card>
 
-                        <Card className="bg-primary/5 border-primary/20">
-                            <CardContent className="p-4 flex items-start gap-3">
-                                <Zap className="w-5 h-5 text-primary mt-1" />
-                                <div>
-                                    <h4 className="font-bold text-primary text-sm">AI Diagnosis</h4>
-                                    <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
-                                        {loading ? "Analyzing sensor signature..." : (healthDetails.diagnosis || "System optimal.")}
+                            <Card className="bg-primary/5 border-primary/20">
+                                <CardContent className="p-4 flex items-start gap-3">
+                                    <Zap className="w-5 h-5 text-primary mt-1" />
+                                    <div>
+                                        <h4 className="font-bold text-primary text-sm">AI Diagnosis</h4>
+                                        <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+                                            {loading ? "Analyzing sensor signature..." : (healthDetails.diagnosis || "System optimal.")}
+                                        </p>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </div>
+
+                        {/* Tabbed Analysis Area */}
+                        <div className="lg:col-span-3">
+                            {/* Custom Tabs */}
+                            <div className="flex border-b border-border mb-6">
+                                <button
+                                    onClick={() => setActiveTab('diagnosis')}
+                                    className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'diagnosis' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                                >
+                                    Diagnosis
+                                </button>
+                                <button
+                                    onClick={() => setActiveTab('signal')}
+                                    className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'signal' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                                >
+                                    Raw Signal
+                                </button>
+                                <button
+                                    onClick={() => setActiveTab('expert')}
+                                    className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'expert' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                                >
+                                    Expert Analysis
+                                </button>
+                            </div>
+
+                            {/* Tab Content */}
+                            <div className="bg-card border border-border rounded-xl p-6 min-h-[400px]">
+
+                                {activeTab === 'diagnosis' && (
+                                    <div className="space-y-6">
+                                        <div className="flex justify-between items-center">
+                                            <h3 className="text-lg font-semibold flex items-center gap-2">
+                                                <TrendingUp className="w-5 h-5 text-status-yellow" />
+                                                Signal Stability / Drift
+                                            </h3>
+                                            <Badge variant="outline" className={`border-${healthDetails.status === 'Critical' ? 'status-red' : 'status-yellow'} text-${healthDetails.status === 'Critical' ? 'status-red' : 'status-yellow'} bg-${healthDetails.status === 'Critical' ? 'status-red' : 'status-yellow'}/5`}>
+                                                {healthDetails.diagnosis || "Analyzing..."}
+                                            </Badge>
+                                        </div>
+                                        <div className="h-[300px] w-full">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <LineChart data={analysisResult?.metrics.hysteresis_x ? analysisResult.metrics.hysteresis_x.map((_: any, i: number) => ({ index: i, value: analysisResult.metrics.hysteresis_y[i] })) : []}>
+                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#2D3748" />
+                                                    <XAxis dataKey="index" stroke="#94a3b8" tickLine={false} axisLine={false} />
+                                                    <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+                                                    <Tooltip
+                                                        contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px' }}
+                                                    />
+                                                    <ReferenceLine y={0.8} stroke="#E53E3E" strokeDasharray="3 3" label={{ value: 'Max Tolerance', fill: '#00ADB', fontSize: 12 }} />
+                                                    <Line type="monotone" dataKey="value" stroke="#00ADB5" strokeWidth={3} dot={{ r: 4, fill: '#0f172a', strokeWidth: 2 }} />
+                                                </LineChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                        <div className="p-4 bg-muted/50 rounded-lg border border-border text-sm">
+                                            <p>Diagnosis: <strong>{analysisResult?.diagnosis}</strong>. Recommendation: <strong>{analysisResult?.recommendation}</strong></p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {activeTab === 'signal' && (
+                                    <div className="space-y-6">
+                                        <h3 className="text-lg font-semibold flex items-center gap-2">
+                                            <Droplets className="w-5 h-5 text-primary" />
+                                            Raw Millivolt (mV) Input
+                                        </h3>
+                                        <div className="h-[300px] w-full">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <LineChart data={analysisResult ? analysisResult.metrics.hysteresis_x.map((val: any, i: number) => ({ time: i, raw: val })) : []}>
+                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#2D3748" />
+                                                    <XAxis dataKey="time" stroke="#94a3b8" tickLine={false} axisLine={false} />
+                                                    <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} />
+                                                    <Tooltip
+                                                        contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px' }}
+                                                    />
+                                                    <Line type="monotone" dataKey="raw" stroke="#4A5568" strokeWidth={1} dot={false} name="Raw Input" />
+                                                </LineChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {activeTab === 'expert' && (
+                                    <div className="space-y-6">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            <div>
+                                                <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
+                                                    <Activity className="w-5 h-5 text-primary" />
+                                                    Hysteresis Loop (Phase Plot)
+                                                </h3>
+                                                <div className="h-[300px] w-full border border-border rounded-lg bg-card p-2">
+                                                    <ResponsiveContainer width="100%" height="100%">
+                                                        <ScatterChart>
+                                                            <CartesianGrid strokeDasharray="3 3" stroke="#2D3748" />
+                                                            <XAxis type="number" dataKey="x" name="Input" stroke="#94a3b8" label={{ value: 'Signal (t)', position: 'insideBottom', offset: -5 }} />
+                                                            <YAxis type="number" dataKey="y" name="Output" stroke="#94a3b8" label={{ value: 'Signal (t+1)', angle: -90, position: 'insideLeft' }} />
+                                                            <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b' }} />
+                                                            <Scatter name="Hysteresis" data={analysisResult?.metrics.hysteresis_x.map((val: any, i: number) => ({ x: val, y: analysisResult.metrics.hysteresis_y[i] }))} fill="#00ADB5" line shape="circle" />
+                                                        </ScatterChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+                                                <p className="text-xs text-muted-foreground mt-2 text-center">Area: {analysisResult?.metrics.hysteresis.toFixed(4)} (Low = Elastic, High = Viscous/Lag)</p>
+                                            </div>
+
+                                            <div>
+                                                <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
+                                                    <TrendingUp className="w-5 h-5 text-primary" />
+                                                    DFA Analysis (Fractal)
+                                                </h3>
+                                                <div className="h-[300px] w-full border border-border rounded-lg bg-card p-2">
+                                                    <ResponsiveContainer width="100%" height="100%">
+                                                        <ScatterChart>
+                                                            <CartesianGrid strokeDasharray="3 3" stroke="#2D3748" />
+                                                            <XAxis type="number" dataKey="x" name="Log Scale" stroke="#94a3b8" label={{ value: 'Log Scale', position: 'insideBottom', offset: -5 }} />
+                                                            <YAxis type="number" dataKey="y" name="Log Fluctuation" stroke="#94a3b8" label={{ value: 'Log F(n)', angle: -90, position: 'insideLeft' }} />
+                                                            <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b' }} />
+                                                            <Scatter name="DFA Points" data={analysisResult?.metrics.dfa_scales.map((s: any, i: number) => ({ x: Math.log(s), y: Math.log(analysisResult.metrics.dfa_fluctuations[i]) }))} fill="#F59E0B" shape="cross" />
+                                                        </ScatterChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+                                                <p className="text-xs text-muted-foreground mt-2 text-center">Hurst Exponent: {analysisResult?.metrics.hurst.toFixed(2)} (0.5 = Random, &gt;0.5 = Persistent)</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+
+                {/* Modal / Report Confirmation */}
+                {isReportModalOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                        <div className="bg-card w-full max-w-md rounded-xl border border-border shadow-2xl p-6 animate-in fade-in zoom-in-95 duration-200">
+                            <div className="flex justify-between items-start mb-4">
+                                <h3 className="text-xl font-bold">Maintenance Validation</h3>
+                                <button onClick={() => setIsReportModalOpen(false)} className="text-muted-foreground hover:text-foreground">✕</button>
+                            </div>
+
+                            <div className="space-y-4">
+                                <div className="p-4 bg-status-green/10 border border-status-green/20 rounded-lg">
+                                    <h4 className="font-semibold text-status-green flex items-center gap-2">
+                                        <CheckCircle className="w-4 h-4" /> Impact Analysis
+                                    </h4>
+                                    <p className="text-sm mt-1 text-foreground">
+                                        Replacing This Probe maintains process sterility compliance and prevents batch rejection (Est. Saved: $12,500).
                                     </p>
                                 </div>
-                            </CardContent>
-                        </Card>
-                    </div>
 
-                    {/* Tabbed Analysis Area */}
-                    <div className="lg:col-span-3">
-                        {/* Custom Tabs */}
-                        <div className="flex border-b border-border mb-6">
-                            <button
-                                onClick={() => setActiveTab('diagnosis')}
-                                className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'diagnosis' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-                            >
-                                Diagnosis
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('signal')}
-                                className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'signal' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-                            >
-                                Raw Signal
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('expert')}
-                                className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'expert' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-                            >
-                                Expert Analysis
-                            </button>
-                        </div>
-
-                        {/* Tab Content */}
-                        <div className="bg-card border border-border rounded-xl p-6 min-h-[400px]">
-
-                            {activeTab === 'diagnosis' && (
-                                <div className="space-y-6">
-                                    <div className="flex justify-between items-center">
-                                        <h3 className="text-lg font-semibold flex items-center gap-2">
-                                            <TrendingUp className="w-5 h-5 text-status-yellow" />
-                                            Signal Stability / Drift
-                                        </h3>
-                                        <Badge variant="outline" className={`border-${healthDetails.status === 'Red' ? 'status-red' : 'status-yellow'} text-${healthDetails.status === 'Red' ? 'status-red' : 'status-yellow'} bg-${healthDetails.status === 'Red' ? 'status-red' : 'status-yellow'}/5`}>
-                                            {healthDetails.diagnosis || "Analyzing..."}
-                                        </Badge>
-                                    </div>
-                                    <div className="h-[300px] w-full">
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <LineChart data={analysisResult?.metrics.hysteresis_x ? analysisResult.metrics.hysteresis_x.map((_, i) => ({ index: i, value: analysisResult.metrics.hysteresis_y[i] })) : []}>
-                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#2D3748" />
-                                                <XAxis dataKey="index" stroke="#94a3b8" tickLine={false} axisLine={false} />
-                                                <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} domain={['auto', 'auto']} />
-                                                <Tooltip
-                                                    contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px' }}
-                                                />
-                                                <ReferenceLine y={0.8} stroke="#E53E3E" strokeDasharray="3 3" label={{ value: 'Max Tolerance', fill: '#00ADB', fontSize: 12 }} />
-                                                <Line type="monotone" dataKey="value" stroke="#00ADB5" strokeWidth={3} dot={{ r: 4, fill: '#0f172a', strokeWidth: 2 }} />
-                                            </LineChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                    <div className="p-4 bg-muted/50 rounded-lg border border-border text-sm">
-                                        <p>Diagnosis: <strong>{analysisResult?.diagnosis}</strong>. Recommendation: <strong>{analysisResult?.recommendation}</strong></p>
-                                    </div>
-                                </div>
-                            )}
-
-                            {activeTab === 'signal' && (
-                                <div className="space-y-6">
-                                    <h3 className="text-lg font-semibold flex items-center gap-2">
-                                        <Droplets className="w-5 h-5 text-primary" />
-                                        Raw Millivolt (mV) Input
-                                    </h3>
-                                    <div className="h-[300px] w-full">
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <LineChart data={analysisResult ? analysisResult.metrics.hysteresis_x.map((val, i) => ({ time: i, raw: val })) : []}>
-                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#2D3748" />
-                                                <XAxis dataKey="time" stroke="#94a3b8" tickLine={false} axisLine={false} />
-                                                <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} />
-                                                <Tooltip
-                                                    contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px' }}
-                                                />
-                                                <Line type="monotone" dataKey="raw" stroke="#4A5568" strokeWidth={1} dot={false} name="Raw Input" />
-                                            </LineChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                </div>
-                            )}
-
-                            {activeTab === 'expert' && (
-                                <div className="space-y-6">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                        <div>
-                                            <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
-                                                <Activity className="w-5 h-5 text-primary" />
-                                                Hysteresis Loop (Phase Plot)
-                                            </h3>
-                                            <div className="h-[300px] w-full border border-border rounded-lg bg-card p-2">
-                                                <ResponsiveContainer width="100%" height="100%">
-                                                    <ScatterChart>
-                                                        <CartesianGrid strokeDasharray="3 3" stroke="#2D3748" />
-                                                        <XAxis type="number" dataKey="x" name="Input" stroke="#94a3b8" label={{ value: 'Signal (t)', position: 'insideBottom', offset: -5 }} />
-                                                        <YAxis type="number" dataKey="y" name="Output" stroke="#94a3b8" label={{ value: 'Signal (t+1)', angle: -90, position: 'insideLeft' }} />
-                                                        <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b' }} />
-                                                        <Scatter name="Hysteresis" data={analysisResult?.metrics.hysteresis_x.map((val, i) => ({ x: val, y: analysisResult.metrics.hysteresis_y[i] }))} fill="#00ADB5" line shape="circle" />
-                                                    </ScatterChart>
-                                                </ResponsiveContainer>
-                                            </div>
-                                            <p className="text-xs text-muted-foreground mt-2 text-center">Area: {analysisResult?.metrics.hysteresis.toFixed(4)} (Low = Elastic, High = Viscous/Lag)</p>
-                                        </div>
-
-                                        <div>
-                                            <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
-                                                <TrendingUp className="w-5 h-5 text-primary" />
-                                                DFA Analysis (Fractal)
-                                            </h3>
-                                            <div className="h-[300px] w-full border border-border rounded-lg bg-card p-2">
-                                                <ResponsiveContainer width="100%" height="100%">
-                                                    <ScatterChart>
-                                                        <CartesianGrid strokeDasharray="3 3" stroke="#2D3748" />
-                                                        <XAxis type="number" dataKey="x" name="Log Scale" stroke="#94a3b8" label={{ value: 'Log Scale', position: 'insideBottom', offset: -5 }} />
-                                                        <YAxis type="number" dataKey="y" name="Log Fluctuation" stroke="#94a3b8" label={{ value: 'Log F(n)', angle: -90, position: 'insideLeft' }} />
-                                                        <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b' }} />
-                                                        <Scatter name="DFA Points" data={analysisResult?.metrics.dfa_scales.map((s, i) => ({ x: Math.log(s), y: Math.log(analysisResult.metrics.dfa_fluctuations[i]) }))} fill="#F59E0B" shape="cross" />
-                                                    </ScatterChart>
-                                                </ResponsiveContainer>
-                                            </div>
-                                            <p className="text-xs text-muted-foreground mt-2 text-center">Hurst Exponent: {analysisResult?.metrics.hurst.toFixed(2)} (0.5 = Random, &gt;0.5 = Persistent)</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                        </div>
-                    </div>
-                </div>
-
-            </div>
-
-            {/* Modal / Report Confirmation */}
-            {isReportModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                    <div className="bg-card w-full max-w-md rounded-xl border border-border shadow-2xl p-6 animate-in fade-in zoom-in-95 duration-200">
-                        <div className="flex justify-between items-start mb-4">
-                            <h3 className="text-xl font-bold">Maintenance Validation</h3>
-                            <button onClick={() => setIsReportModalOpen(false)} className="text-muted-foreground hover:text-foreground">✕</button>
-                        </div>
-
-                        <div className="space-y-4">
-                            <div className="p-4 bg-status-green/10 border border-status-green/20 rounded-lg">
-                                <h4 className="font-semibold text-status-green flex items-center gap-2">
-                                    <CheckCircle className="w-4 h-4" /> Impact Analysis
-                                </h4>
-                                <p className="text-sm mt-1 text-foreground">
-                                    Replacing <strong>{sensorInfo.name}</strong> maintains process sterility compliance and prevents batch rejection (Est. Saved: $12,500).
+                                <p className="text-sm text-muted-foreground">
+                                    A calibration certificate request has been generated. Proceed with scheduling?
                                 </p>
-                            </div>
 
-                            <p className="text-sm text-muted-foreground">
-                                A calibration certificate request has been generated. Proceed with scheduling?
-                            </p>
-
-                            <div className="flex gap-3 mt-6">
-                                <Button className="w-full bg-primary hover:bg-primary-end" onClick={() => setIsReportModalOpen(false)}>Create Work Order</Button>
-                                <Button variant="outline" className="w-full" onClick={() => setIsReportModalOpen(false)}>Cancel</Button>
+                                <div className="flex gap-3 mt-6">
+                                    <Button className="w-full bg-primary hover:bg-primary-end" onClick={() => setIsReportModalOpen(false)}>Create Work Order</Button>
+                                    <Button variant="outline" className="w-full" onClick={() => setIsReportModalOpen(false)}>Cancel</Button>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )}
+            </div>
         </div>
     );
 }

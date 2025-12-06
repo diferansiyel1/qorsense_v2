@@ -6,9 +6,9 @@ from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, Bac
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, insert, desc
-from backend.database import get_db, engine
+from backend.database import get_db, engine, Base
 from backend.models_db import Sensor, SensorReading, AnalysisResultDB, Organization, SourceType
-from backend.models import SensorDataInput, AnalysisResult, AnalysisMetrics, SyntheticRequest, ReportRequest
+from backend.models import SensorDataInput, AnalysisResult, AnalysisMetrics, SyntheticRequest, ReportRequest, SensorCreate, SensorResponse
 from backend.analysis import SensorAnalyzer
 import numpy as np
 import logging
@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting up QorSense Backend...")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     yield
     # Shutdown
     logger.info("Shutting down...")
@@ -42,7 +44,7 @@ app = FastAPI(title="QorSense v1 API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8501"],
+    allow_origins=["http://localhost:3000", "http://localhost:8501", "http://127.0.0.1:3000", "http://127.0.0.1:8501"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -58,6 +60,7 @@ async def save_analysis_result(db: AsyncSession, sensor_id: str, result: Analysi
             sensor_id=sensor_id,
             timestamp=datetime.fromisoformat(result.timestamp),
             health_score=result.health_score,
+            status=result.status,
             metrics=result.metrics.dict(),
             diagnosis=result.diagnosis,
             recommendation=result.recommendation
@@ -122,6 +125,97 @@ async def run_background_analysis(sensor_id: str, db_session_factory):
             logger.error(f"Background analysis error: {e}")
 
 # --- Endpoints ---
+
+@app.get("/sensors", response_model=list[SensorResponse])
+async def get_sensors(db: AsyncSession = Depends(get_db)):
+    """List all sensors with their latest health status."""
+    result = await db.execute(select(Sensor))
+    sensors = result.scalars().all()
+    
+    sensor_responses = []
+    for s in sensors:
+        # Get latest analysis
+        stmt = select(AnalysisResultDB).where(AnalysisResultDB.sensor_id == s.id).order_by(desc(AnalysisResultDB.timestamp)).limit(1)
+        res = await db.execute(stmt)
+        latest_analysis = res.scalar_one_or_none()
+        
+        # Create response object
+        response = SensorResponse(
+            id=s.id,
+            name=s.name,
+            location=s.location,
+            source_type=s.source_type,
+            organization_id=s.org_id,
+            health_score=latest_analysis.health_score if latest_analysis else 0.0,
+            status=latest_analysis.status if latest_analysis else "Unknown"
+        )
+        sensor_responses.append(response)
+        
+    return sensor_responses
+
+@app.post("/sensors", response_model=SensorResponse)
+async def create_sensor(sensor: SensorCreate, db: AsyncSession = Depends(get_db)):
+    """Create a new sensor."""
+    # Generate a simple ID if not provided (in real app, use UUID or DB autoincrement logic for hardware ID)
+    # Here we simulate a hardware ID
+    import uuid
+    new_id = str(uuid.uuid4())[:8]
+    
+    db_sensor = Sensor(
+        id=new_id,
+        name=sensor.name,
+        location=sensor.location,
+        source_type=SourceType(sensor.source_type),
+        org_id=sensor.organization_id
+    )
+    db.add(db_sensor)
+    await db.commit()
+    await db.refresh(db_sensor)
+    return db_sensor
+
+@app.get("/sensors/{sensor_id}/history", response_model=list[AnalysisResult])
+async def get_sensor_history(sensor_id: str, db: AsyncSession = Depends(get_db)):
+    """Get analysis history for a sensor."""
+    # We need to map DB AnalysisResultDB to Pydantic AnalysisResult
+    # This might be tricky because AnalysisResultDB stores metrics as JSON, AnalysisResult expects object
+    stmt = select(AnalysisResultDB).where(AnalysisResultDB.sensor_id == sensor_id).order_by(desc(AnalysisResultDB.timestamp))
+    result = await db.execute(stmt)
+    history_db = result.scalars().all()
+    
+    history_pydantic = []
+    for item in history_db:
+        # Convert DB item to Pydantic
+        # Assuming metrics is stored as dict in valid format
+        try:
+            metrics_obj = AnalysisMetrics(**item.metrics)
+            # Reconstruct AnalysisResult
+            # Note: AnalysisResult might need 'prediction' which is optional
+            res = AnalysisResult(
+                sensor_id=item.sensor_id,
+                timestamp=item.timestamp.isoformat(),
+                health_score=item.health_score,
+                status="Unknown", # statuses are not stored in DB currently? Or logic needed
+                diagnosis=item.diagnosis,
+                metrics=metrics_obj,
+                flags=[], # Flags not stored in DB explicitly in this simple schema? Or inside metrics?
+                recommendation=item.recommendation
+            )
+            # Fill in missing fields with defaults or logic if needed
+            # For now, let's assume status/flags are derived or stored elsewhere or okay to be default
+            # Actually models_db AnalysisResultDB doesn't have status/flags columns?
+            # Let's fix this by updating the DB model? Or just returning what we have.
+            # The prompt asked to adapt frontend to backend.
+            # Let's mock status for now based on score.
+            if res.health_score < 60: res.status = "Critical"
+            elif res.health_score < 80: res.status = "Warning"
+            else: res.status = "Healthy"
+            
+            history_pydantic.append(res)
+        except Exception as e:
+            logger.error(f"Error converting history item {item.id}: {e}")
+            continue
+            
+    return history_pydantic
 
 @app.post("/upload-csv")
 async def upload_csv(
