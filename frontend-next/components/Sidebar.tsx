@@ -4,36 +4,85 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, PieChart, FileText, Settings } from "lucide-react";
+import {
+    LayoutDashboard,
+    Activity,
+    CalendarClock,
+    Database,
+    FlaskConical,
+    FileText,
+    Settings
+} from "lucide-react";
 
-const navItems = [
+// Separator Component
+const Separator = ({ title }: { title?: string }) => (
+    <div className="px-3 py-2 mt-4 mb-1">
+        {title ? (
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{title}</h3>
+        ) : (
+            <div className="h-px bg-slate-gray/30" />
+        )}
+    </div>
+);
+
+const navGroups = [
     {
-        title: "Dashboard",
-        href: "/",
-        icon: LayoutDashboard,
+        title: "Platform",
+        items: [
+            {
+                title: "Dashboard",
+                href: "/",
+                icon: LayoutDashboard,
+            },
+            {
+                title: "Sensors",
+                href: "/sensor-analysis", // Kept original link, renamed title to Sensors per logic
+                icon: Activity,
+            },
+        ]
     },
     {
-        title: "Sensor Analysis",
-        href: "/sensor-analysis",
-        icon: PieChart,
+        title: "Operations",
+        items: [
+            {
+                title: "Maintenance",
+                href: "/maintenance",
+                icon: CalendarClock,
+            },
+            {
+                title: "Data Sources",
+                href: "/data-sources",
+                icon: Database,
+            },
+            {
+                title: "Simulation Lab",
+                href: "/simulation",
+                icon: FlaskConical,
+            },
+        ]
     },
     {
-        title: "Reports",
-        href: "/reports",
-        icon: FileText,
-    },
-    {
-        title: "Settings",
-        href: "/settings",
-        icon: Settings,
-    },
+        title: "Management",
+        items: [
+            {
+                title: "Reports Archive",
+                href: "/reports",
+                icon: FileText,
+            },
+            {
+                title: "Settings",
+                href: "/settings",
+                icon: Settings,
+            },
+        ]
+    }
 ];
 
 export function Sidebar() {
     const pathname = usePathname();
 
     return (
-        <aside className="flex w-64 flex-col bg-[#111a22] p-4 text-white h-screen fixed left-0 top-0 border-r border-slate-gray/50">
+        <aside className="flex w-64 flex-col bg-[#111a22] p-4 text-white h-screen fixed left-0 top-0 border-r border-slate-gray/50 overflow-y-auto">
             <div className="flex-grow">
                 {/* Brand / Logo Section */}
                 <div className="flex items-center justify-center py-6 mb-2">
@@ -49,40 +98,55 @@ export function Sidebar() {
                 </div>
 
                 {/* Navigation */}
-                <nav className="flex flex-col gap-2">
-                    {navItems.map((item) => {
-                        const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
-                        return (
-                            <Link
-                                key={item.href}
-                                href={item.href}
-                                className={cn(
-                                    "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group",
-                                    isActive
-                                        ? "bg-gradient-to-r from-primary-start to-primary-end shadow-md shadow-primary/20"
-                                        : "hover:bg-slate-gray/50 text-gray-400 hover:text-white"
-                                )}
-                            >
-                                <item.icon
-                                    className={cn(
-                                        "w-5 h-5 transition-colors",
-                                        isActive ? "text-white" : "text-gray-400 group-hover:text-white"
-                                    )}
-                                />
-                                <p className={cn(
-                                    "text-sm font-medium leading-normal transition-colors",
-                                    isActive ? "text-white" : "text-gray-400 group-hover:text-white"
-                                )}>
-                                    {item.title}
-                                </p>
-                            </Link>
-                        );
-                    })}
+                <nav className="flex flex-col gap-1">
+                    {navGroups.map((group, groupIndex) => (
+                        <div key={groupIndex}>
+                            {/* Logic for separators: Show separator between groups, or logic based on index */}
+                            {groupIndex > 0 && <Separator title={group.title} />}
+
+                            {groupIndex === 0 && <div className="mb-2" />}
+
+
+                            {group.items.map((item) => {
+                                const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+                                return (
+                                    <Link
+                                        key={item.href}
+                                        href={item.href}
+                                        className={cn(
+                                            "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative overflow-hidden",
+                                            isActive
+                                                ? "bg-slate-gray/20 text-[#00ADB5] shadow-[0_0_15px_-3px_rgba(0,173,181,0.3)] border border-[#00ADB5]/20"
+                                                : "hover:bg-slate-gray/30 text-gray-400 hover:text-white"
+                                        )}
+                                    >
+                                        {/* Glow effect helper for active state */}
+                                        {isActive && (
+                                            <div className="absolute inset-0 bg-[#00ADB5]/5 pointer-events-none" />
+                                        )}
+
+                                        <item.icon
+                                            className={cn(
+                                                "w-5 h-5 transition-colors relative z-10",
+                                                isActive ? "text-[#00ADB5] drop-shadow-[0_0_8px_rgba(0,173,181,0.5)]" : "text-gray-400 group-hover:text-white"
+                                            )}
+                                        />
+                                        <p className={cn(
+                                            "text-sm font-medium leading-normal transition-colors relative z-10",
+                                            isActive ? "text-[#00ADB5]" : "text-gray-400 group-hover:text-white"
+                                        )}>
+                                            {item.title}
+                                        </p>
+                                    </Link>
+                                );
+                            })}
+                        </div>
+                    ))}
                 </nav>
             </div>
 
             {/* User Footer */}
-            <div className="border-t border-slate-gray/50 pt-4 mt-4">
+            <div className="border-t border-slate-gray/50 pt-4 mt-4 bg-[#111a22]">
                 <div className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-slate-gray/50 transition-colors cursor-pointer">
                     <div
                         className="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10 ring-2 ring-slate-gray"
