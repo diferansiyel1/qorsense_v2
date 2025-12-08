@@ -23,8 +23,12 @@ export interface AnalysisMetrics {
     noise_std: number;
     snr_db: number;
     hysteresis: number;
+    hysteresis_x?: number[];
+    hysteresis_y?: number[];
     hurst: number;
     hurst_r2: number;
+    dfa_scales?: number[];
+    dfa_fluctuations?: number[];
     complexity?: number;
     prediction_error?: number;
 }

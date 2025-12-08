@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-    ScatterChart, Scatter, ReferenceLine
+    ScatterChart, Scatter, ReferenceLine, Brush
 } from 'recharts';
 import {
     Activity, ArrowLeft, AlertTriangle, Calendar, FileText,
@@ -28,6 +28,7 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
     // State for Real Data
     const [analysisResult, setAnalysisResult] = useState<any>(null); // Using any for speed, ideally typed
     const [loading, setLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [dataset, setDataset] = useState<number[]>([]); // Store raw data for report
     const [hasData, setHasData] = useState(false);
     const [generatingReport, setGeneratingReport] = useState(false);
@@ -35,44 +36,51 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
     // Initial Fetch
     // We will simulate fetching specific sensor data type based on ID
     // ID 1: Normal, ID 2: Drifting, ID 3: Noisy
-    const fetchData = async () => {
-        setLoading(true);
+    const fetchData = async (start?: string, end?: string) => {
+        // Only set main loading on initial load or if we really want to clear everything
+        // For range updates, use isRefreshing to keep chart mounted
+        if (!analysisResult) setLoading(true);
+        else setIsRefreshing(true);
+
         try {
             // Retrieve settings from localStorage
             const savedConfig = localStorage.getItem("qorsense_config");
             const config = savedConfig ? JSON.parse(savedConfig) : undefined;
 
             // Try to analyze existing data with optional config
-            const result = await api.analyzeSensor(sensorId, config);
-            setAnalysisResult(result);
-
-            // For reporting, we ideally need the raw dataset. 
-            // If the API returns it in result (it should for charts), we use that.
-            // Based on checking the file earlier, result.metrics.hysteresis_x seems to be used as raw data proxy in charts?
-            // Actually, let's see api.ts: payload has values: []. 
-            // If backend analysis returns the data used, we can store it.
-            // Let's assume result includes the data or we can assume it's available.
-            // For now, if result has 'data' or similar we use it, otherwise empty array which might fail report generation if backend needs it.
-            // Checking charts implementation: analysisResult.metrics.hysteresis_x seems to be time/index, and hysteresis_y is value? 
-            // In the Tab "signal", it maps hysteresis_x as time and hysterical_x (wait, code said: data={analysisResult ? analysisResult.metrics.hysteresis_x.map((val: any, i: number) => ({ time: i, raw: val })) : []})
-            // So 'hysteresis_x' holds the raw values in that chart? That seems odd naming but consistent with existing code.
-            if (result && result.metrics && result.metrics.hysteresis_x) {
-                setDataset(result.metrics.hysteresis_x);
+            const requestConfig = config || {};
+            if (start && end) {
+                requestConfig.start_date = start;
+                requestConfig.end_date = end;
             }
 
-            setHasData(true);
+            const result = await api.analyzeSensor(sensorId, requestConfig);
+
+            if (result && result.status === "No Data") {
+                setHasData(false);
+                setAnalysisResult(null);
+            } else if (result && result.metrics && result.metrics.hysteresis_x) {
+                setDataset(result.metrics.hysteresis_x);
+                setHasData(true);
+                setAnalysisResult(result);
+            } else {
+                setDataset([]);
+                setHasData(true);
+                setAnalysisResult(result);
+            }
         } catch (error: any) {
             if (error?.response?.status !== 404) {
                 console.error("Failed to fetch data:", error);
             }
             // If 404/500, likely no data
-            // Backend throws error if no data found in DB and no values provided
             setHasData(false);
             setAnalysisResult(null);
         } finally {
             setLoading(false);
+            setIsRefreshing(false);
         }
     };
+
 
     useEffect(() => {
         fetchData();
@@ -299,7 +307,7 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                                                         contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px' }}
                                                     />
                                                     <ReferenceLine y={0.8} stroke="#E53E3E" strokeDasharray="3 3" label={{ value: 'Max Tolerance', fill: '#00ADB', fontSize: 12 }} />
-                                                    <Line type="monotone" dataKey="value" stroke="#af5ce0" strokeWidth={3} dot={{ r: 4, fill: '#0f172a', strokeWidth: 2 }} />
+                                                    <Line type="monotone" dataKey="value" stroke="#af5ce0" strokeWidth={3} dot={{ r: 4, fill: '#0f172a', strokeWidth: 2 }} isAnimationActive={false} />
                                                 </LineChart>
                                             </ResponsiveContainer>
                                         </div>
@@ -315,24 +323,155 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                                             <Droplets className="w-5 h-5 text-primary" />
                                             Raw Millivolt (mV) Input
                                         </h3>
-                                        <div className="h-[300px] w-full">
+                                        <div className="h-[300px] w-full relative">
+                                            {isRefreshing && (
+                                                <div className="absolute inset-0 bg-black/20 z-10 flex items-center justify-center rounded-lg backdrop-blur-[1px]">
+                                                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                                                </div>
+                                            )}
                                             <ResponsiveContainer width="100%" height="100%">
-                                                <LineChart data={analysisResult ? analysisResult.metrics.hysteresis_x.map((val: any, i: number) => ({ time: i, raw: val })) : []}>
+                                                <LineChart data={analysisResult ? analysisResult.metrics.hysteresis_x.map((val: any, i: number) => ({
+                                                    index: i,
+                                                    time: analysisResult.metrics.timestamps ? new Date(analysisResult.metrics.timestamps[i]).getTime() : i,
+                                                    raw: val,
+                                                    dateStr: analysisResult.metrics.timestamps ? analysisResult.metrics.timestamps[i] : i
+                                                })) : []}>
                                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#2D3748" />
-                                                    <XAxis dataKey="time" stroke="#94a3b8" tickLine={false} axisLine={false} />
+                                                    <XAxis
+                                                        dataKey="index"
+                                                        stroke="#94a3b8"
+                                                        tickLine={false}
+                                                        axisLine={false}
+                                                        tickFormatter={(idx) => {
+                                                            const ts = analysisResult?.metrics?.timestamps?.[idx];
+                                                            if (!ts) return idx;
+                                                            const d = new Date(ts);
+                                                            return d.getSeconds() === 0 ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(/^.*:(\d{2})$/, ':$1');
+                                                        }}
+                                                        type="number"
+                                                        domain={['auto', 'auto']}
+                                                        minTickGap={30}
+                                                    />
                                                     <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} />
                                                     <Tooltip
                                                         contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px' }}
+                                                        labelFormatter={(idx) => {
+                                                            const ts = analysisResult?.metrics?.timestamps?.[idx];
+                                                            return ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionDigits: 3 }) : idx;
+                                                        }}
                                                     />
-                                                    <Line type="monotone" dataKey="raw" stroke="#4A5568" strokeWidth={1} dot={false} name="Raw Input" />
+                                                    <Line type="monotone" dataKey="raw" stroke="#4A5568" strokeWidth={1} dot={false} name="Raw Input" isAnimationActive={false} />
+                                                    <Brush
+                                                        dataKey="index"
+                                                        height={30}
+                                                        stroke="#00ADB5"
+                                                        tickFormatter={(idx) => {
+                                                            const ts = analysisResult?.metrics?.timestamps?.[idx];
+                                                            return ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : idx;
+                                                        }}
+                                                        onChange={(range: any) => {
+                                                            // We want to fetch data when user STOPS dragging (onDragEnd is better but Brush onChange fires constantly)
+                                                            // For now, let's use a button or debounce?
+                                                            // Recharts Brush doesn't have onDragEnd easily exposed in types sometimes.
+                                                            // Let's rely on user clicking "Analyze Selection" or similar?
+                                                            // Or just update local state and have a button?
+                                                            // Requirement: "Kullanıcı sürüklemeyi bıraktığında (onDragEnd veya debounce ile)"
+                                                            // Use debounce logic here if possible, or simpler: Update a 'selectedRange' state.
+                                                        }}
+                                                        onDragEnd={(range: any) => {
+                                                            if (range && range.startIndex !== undefined && range.endIndex !== undefined) {
+                                                                const timestamps = analysisResult?.metrics.timestamps;
+                                                                if (timestamps) {
+                                                                    const start = timestamps[range.startIndex];
+                                                                    const end = timestamps[range.endIndex];
+                                                                    // Trigger fetch
+                                                                    fetchData(start, end);
+                                                                }
+                                                            }
+                                                        }}
+                                                    />
                                                 </LineChart>
                                             </ResponsiveContainer>
+                                            <p className="text-xs text-center text-muted-foreground mt-2">
+                                                💡 Drag the slider below to analyze a specific time range.
+                                            </p>
                                         </div>
                                     </div>
                                 )}
 
                                 {activeTab === 'expert' && (
                                     <div className="space-y-6">
+                                        <div className="space-y-6 mb-8">
+                                            <h3 className="text-lg font-semibold flex items-center gap-2">
+                                                <Activity className="w-5 h-5 text-primary" />
+                                                Detrended Signal Analysis (Trend vs Noise)
+                                            </h3>
+                                            <div className="h-[300px] w-full border border-border rounded-lg bg-card p-2">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <LineChart data={analysisResult?.metrics?.trend ? analysisResult.metrics.trend.map((val: any, i: number) => ({
+                                                        index: i,
+                                                        time: analysisResult.metrics.timestamps ? new Date(analysisResult.metrics.timestamps[i]).getTime() : i,
+                                                        trend: val,
+                                                        original: analysisResult.metrics.hysteresis_x[i]
+                                                    })) : []}>
+                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#2D3748" />
+                                                        <XAxis
+                                                            dataKey="index"
+                                                            stroke="#94a3b8"
+                                                            tickLine={false}
+                                                            axisLine={false}
+                                                            tickFormatter={(idx) => {
+                                                                const ts = analysisResult?.metrics?.timestamps?.[idx];
+                                                                if (!ts) return idx;
+                                                                const d = new Date(ts);
+                                                                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                                                            }}
+                                                            type="number"
+                                                            domain={['auto', 'auto']}
+                                                        />
+                                                        <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} />
+                                                        <Tooltip
+                                                            contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px' }}
+                                                            labelFormatter={(idx) => {
+                                                                const ts = analysisResult?.metrics?.timestamps?.[idx];
+                                                                return ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionDigits: 3 }) : idx;
+                                                            }}
+                                                        />
+                                                        <Line type="monotone" dataKey="original" stroke="#4A5568" strokeWidth={1} dot={false} name="Original Signal" isAnimationActive={false} strokeOpacity={0.4} />
+                                                        <Line type="monotone" dataKey="trend" stroke="#F59E0B" strokeWidth={2} dot={false} name="Extracted Trend" isAnimationActive={false} />
+                                                    </LineChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                            <div className="h-[200px] w-full border border-border rounded-lg bg-card p-2">
+                                                <h4 className="text-sm font-medium mb-2 text-muted-foreground">Residuals (Noise Component)</h4>
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <LineChart data={analysisResult?.metrics?.residuals ? analysisResult.metrics.residuals.map((val: any, i: number) => ({
+                                                        index: i,
+                                                        time: analysisResult.metrics.timestamps ? new Date(analysisResult.metrics.timestamps[i]).getTime() : i,
+                                                        residual: val
+                                                    })) : []}>
+                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#2D3748" />
+                                                        <XAxis
+                                                            dataKey="index"
+                                                            stroke="#94a3b8"
+                                                            tickLine={false}
+                                                            axisLine={false}
+                                                            hide
+                                                        />
+                                                        <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} />
+                                                        <Tooltip
+                                                            contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px' }}
+                                                            labelFormatter={(idx) => {
+                                                                const ts = analysisResult?.metrics?.timestamps?.[idx];
+                                                                return ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionDigits: 3 }) : idx;
+                                                            }}
+                                                        />
+                                                        <Line type="monotone" dataKey="residual" stroke="#ef4444" strokeWidth={1} dot={false} name="Residuals" isAnimationActive={false} />
+                                                    </LineChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                             <div>
                                                 <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
@@ -346,7 +485,7 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                                                             <XAxis type="number" dataKey="x" name="Input" stroke="#94a3b8" label={{ value: 'Signal (t)', position: 'insideBottom', offset: -5 }} />
                                                             <YAxis type="number" dataKey="y" name="Output" stroke="#94a3b8" label={{ value: 'Signal (t+1)', angle: -90, position: 'insideLeft' }} />
                                                             <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b' }} />
-                                                            <Scatter name="Hysteresis" data={analysisResult?.metrics.hysteresis_x.map((val: any, i: number) => ({ x: val, y: analysisResult.metrics.hysteresis_y[i] }))} fill="#af5ce0" line shape="circle" />
+                                                            <Scatter name="Hysteresis" data={analysisResult?.metrics.hysteresis_x.map((val: any, i: number) => ({ x: val, y: analysisResult.metrics.hysteresis_y[i] }))} fill="#af5ce0" line shape="circle" isAnimationActive={false} />
                                                         </ScatterChart>
                                                     </ResponsiveContainer>
                                                 </div>
@@ -365,7 +504,7 @@ export default function SensorDetailPage(props: { params: Promise<{ id: string }
                                                             <XAxis type="number" dataKey="x" name="Log Scale" stroke="#94a3b8" label={{ value: 'Log Scale', position: 'insideBottom', offset: -5 }} />
                                                             <YAxis type="number" dataKey="y" name="Log Fluctuation" stroke="#94a3b8" label={{ value: 'Log F(n)', angle: -90, position: 'insideLeft' }} />
                                                             <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b' }} />
-                                                            <Scatter name="DFA Points" data={analysisResult?.metrics.dfa_scales.map((s: any, i: number) => ({ x: Math.log(s), y: Math.log(analysisResult.metrics.dfa_fluctuations[i]) }))} fill="#F59E0B" shape="cross" />
+                                                            <Scatter name="DFA Points" data={analysisResult?.metrics.dfa_scales.map((s: any, i: number) => ({ x: Math.log(s), y: Math.log(analysisResult.metrics.dfa_fluctuations[i]) }))} fill="#F59E0B" shape="cross" isAnimationActive={false} />
                                                         </ScatterChart>
                                                     </ResponsiveContainer>
                                                 </div>

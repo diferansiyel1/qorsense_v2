@@ -169,13 +169,90 @@ class SensorAnalyzer:
             logger.warning(f"DFA Calculation Error: {e}")
             return 0.5, 0.0, [], []
 
-    def get_trend_line(self, data: np.ndarray) -> Dict[str, List[float]]:
-        """Generate coordinates for the linear regression line."""
-        if len(data) < 2: return {"x": [], "y": []}
-        x = np.arange(len(data))
-        slope, intercept, _, _, _ = stats.linregress(x, data)
-        trend_y = slope * x + intercept
-        return {"x": x.tolist(), "y": trend_y.tolist()}
+    def decompose_signal(self, data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Separate signal into Trend and Residuals using Savitzky-Golay filter.
+        Trend represents Process Change.
+        Residuals represent Noise/Sensor Characteristics.
+        """
+        if len(data) < self.config.min_data_points:
+             return data, np.zeros_like(data)
+             
+        # Savitzky-Golay filter
+        # Window length must be odd and <= data length
+        window_length = min(len(data), 51)
+        if window_length % 2 == 0: window_length -= 1
+        window_length = max(3, window_length)
+        
+        polyorder = 3
+        if window_length <= polyorder:
+             polyorder = window_length - 1
+             
+        try:
+            trend = signal.savgol_filter(data, window_length, polyorder)
+        except Exception as e:
+            logger.warning(f"Golay filter failed: {e}. Using median filter fallback.")
+            trend = signal.medfilt(data, kernel_size=min(len(data), 11) if min(len(data), 11) % 2 else min(len(data), 11)-1)
+
+        residuals = data - trend
+        return trend, residuals
+
+    def analyze(self, raw_data: list) -> Dict[str, Any]:
+        """
+        Centralized Analysis Pipeline.
+        Returns full analysis result (metrics + health score).
+        """
+        # 1. Preprocessing
+        clean_data = self.preprocessing(raw_data)
+        
+        # 2. Decomposition (Signal Separation)
+        trend, residuals = self.decompose_signal(clean_data)
+        
+        # 3. Calculate Metrics
+        # Slope -> Calculated on TREND
+        slope = self.calc_slope(trend)
+        
+        # Noise -> Calculated on RESIDUALS
+        noise_std = float(np.std(residuals))
+        
+        # DFA -> Calculated on RESIDUALS (Detrended Fluctuation Analysis usually expects detrended data anyway, but explicit usage here is safer)
+        hurst, hurst_r2, dfa_scales, dfa_flucts = self.calc_dfa(residuals)
+        
+        # Metric Helpers (Some still use full data or specific components)
+        bias = self.calc_bias(clean_data) # Bias is absolute shift, use clean data (or trend end)
+        snr_db = self.calc_snr_db(clean_data) # SNR usually needs both signal (trend) and noise (residuals)
+        hysteresis, hyst_x, hyst_y = self.calc_hysteresis(clean_data)
+        
+        metrics_dict = {
+            "bias": bias, 
+            "slope": slope, 
+            "noise_std": noise_std, 
+            "snr_db": snr_db,
+            "hysteresis": hysteresis, 
+            "hysteresis_x": hyst_x, 
+            "hysteresis_y": hyst_y,
+            "hurst": hurst, 
+            "hurst_r2": hurst_r2, 
+            "dfa_scales": dfa_scales, 
+            "dfa_fluctuations": dfa_flucts,
+            "trend": trend.tolist(),
+            "residuals": residuals.tolist()
+        }
+        
+        # 4. Health Decision & RUL
+        # We pass metrics_dict to get_health_score, but need to update get_health_score to logic
+        health = self.get_health_score(metrics_dict)
+        rul_prediction = self.calc_rul(trend, slope) # Use trend for RUL projection
+
+        return {
+            "metrics": metrics_dict,
+            "health": health,
+            "prediction": rul_prediction,
+            "components": { # Optional: return components for debugging if needed, but usually too heavy
+                # "trend": trend.tolist(),
+                # "residuals": residuals.tolist()
+            }
+        }
 
     def calc_rul(self, data: np.ndarray, slope: float) -> str:
         """
@@ -225,26 +302,56 @@ class SensorAnalyzer:
             return f"{mins} mins"
 
     def get_health_score(self, metrics: Dict[str, float]) -> Dict[str, Any]:
-        """Calculate weighted health score based on config."""
+        """Calculate weighted health score with new Decision Logic."""
         score = 100.0
         diagnosis = []
         flags = []
         recommendation = "System operating normally."
         
-        # Slope
+        # --- Decision Logic Refinement ---
+        
         slope = abs(metrics.get("slope", 0))
+        noise_std = metrics.get("noise_std", 0)
+        # We can normalize noise? Or use absolute threshold?
+        # Let's use config. But if we don't have explicit noise threshold config...
+        # We will assume some heuristic or reuse snr/existing check.
+        # reusing LOW_SNR logic for "High Noise" but checking residuals is better.
+        
+        # 1. Process Change vs Fault
+        is_high_slope = slope > self.config.slope_warning
+        # Define high noise based on config or heuristic. 
+        # If noise_std is small vs slope?
+        
+        # Let's use existing logic but refined.
+        
+        # Slope Check (Trend)
         if slope > self.config.slope_critical:
-            score -= 25
-            diagnosis.append("Critical Trend Drift")
-            flags.append("DRIFT_CRITICAL")
-            recommendation = "Immediate calibration required."
+            # Critical Trend
+            if noise_std < 0.5: # Clean Signal (Heuristic Threshold, or use config if available)
+                # It's a PROCESS CHANGE
+                 score -= 10 # Small penalty for process change
+                 diagnosis.append("Process Parameter Change Detected")
+                 flags.append("PROCESS_CHANGE")
+                 recommendation = "Verify process settings."
+            else:
+                # It's Complex/Fault
+                score -= 25
+                diagnosis.append("Critical Drift (Unstable)")
+                flags.append("DRIFT_CRITICAL")
+                recommendation = "Immediate calibration required."
+                
         elif slope > self.config.slope_warning:
-            score -= 15
-            diagnosis.append("Moderate Trend Drift")
-            flags.append("DRIFT_WARNING")
-            recommendation = "Schedule maintenance check."
+            if noise_std < 0.5:
+                # Process Change
+                diagnosis.append("Minor Process Variation")
+                flags.append("PROCESS_VAR")
+            else:
+                score -= 15
+                diagnosis.append("Moderate Trend Drift")
+                flags.append("DRIFT_WARNING")
+                recommendation = "Schedule maintenance check."
             
-        # Bias
+        # Bias Check (Absolute Shift)
         bias = abs(metrics.get("bias", 0))
         if bias > self.config.bias_critical:
             score -= 20
@@ -255,18 +362,22 @@ class SensorAnalyzer:
             diagnosis.append("Minor Bias Shift")
             flags.append("BIAS_WARNING")
 
-        # Noise (SNR)
-        # Low SNR is bad.
+        # Noise Check (Residuals)
+        # Using SNR from metrics (which uses residuals implicitly in new code or calc_snr_db)
         snr_db = metrics.get("snr_db", 100)
-        # Assuming typical industrial sensor: < 20dB is noisy, < 10dB is critical
-        if snr_db < 10:
-            score -= 20
-            diagnosis.append("Critical Signal Noise")
+        
+        # Also check raw noise_std if helpful
+        if noise_std > 2.0: # Heuristic for "High Noise"
+             score -= 20
+             diagnosis.append("High Sensor Noise")
+             flags.append("NOISE_CRITICAL")
+        elif snr_db < 10:
+            score -= 15 
+            diagnosis.append("Critical Signal Quality (SNR)")
             flags.append("LOW_SNR_CRITICAL")
-            recommendation = "Check sensor wiring and shielding."
         elif snr_db < 20:
-            score -= 10
-            diagnosis.append("High Noise Level")
+            score -= 5
+            diagnosis.append("Noisy Signal")
             flags.append("LOW_SNR_WARNING")
         
         # Hysteresis
@@ -276,7 +387,7 @@ class SensorAnalyzer:
             diagnosis.append("Hysteresis Detected")
             flags.append("HYSTERESIS")
 
-        # DFA
+        # DFA (Residuals)
         hurst = metrics.get("hurst", 0.5)
         hurst_r2 = metrics.get("hurst_r2", 0.0)
         

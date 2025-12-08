@@ -14,7 +14,7 @@ import numpy as np
 import logging
 import csv
 import codecs
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 
 # Configure Logging
@@ -297,64 +297,131 @@ async def stream_data(
     
     return {"status": "received", "sensor_id": sensor_id}
 
-@app.post("/analyze", response_model=AnalysisResult)
+# --- Extended Models for Timestamps (Since models.py is read-only) ---
+from typing import List, Optional
+class AnalysisMetricsExtended(AnalysisMetrics):
+    timestamps: List[str] = []
+    trend: List[float] = []
+    residuals: List[float] = []
+
+class AnalysisResultExtended(AnalysisResult):
+    metrics: AnalysisMetricsExtended
+
+@app.post("/analyze", response_model=AnalysisResultExtended)
 async def analyze_sensor(data: SensorDataInput, db: AsyncSession = Depends(get_db)):
     """Analyze sensor data. Supports ad-hoc (values) or DB-fetch (sensor_id)."""
     logger.info(f"Analysis request for {data.sensor_id}")
     
     values = data.values
+    timestamps_iso = []
     
     # If no values provided, try to fetch from DB
     if not values or len(values) == 0:
-        window_size = 100
+        # Check for start_date and end_date in config
+        start_date = None
+        end_date = None
+        
         if data.config:
-            # Check if it's a dict or object (Pydantic model)
             if isinstance(data.config, dict):
-                window_size = data.config.get("window_size", 100)
+                 start_date = data.config.get("start_date")
+                 end_date = data.config.get("end_date")
             else:
-                window_size = getattr(data.config, "window_size", 100) or 100
+                 start_date = getattr(data.config, "start_date", None)
+                 end_date = getattr(data.config, "end_date", None)
+                 
+        if start_date and end_date:
+            # Date Range Query: No limit, ASC order
+            try:
+                # Ensure they are datetime objects or strings
+                if isinstance(start_date, str): start_date = datetime.fromisoformat(start_date)
+                if isinstance(end_date, str): end_date = datetime.fromisoformat(end_date)
+                
+                stmt = select(SensorReading).where(
+                    SensorReading.sensor_id == data.sensor_id,
+                    SensorReading.timestamp >= start_date,
+                    SensorReading.timestamp <= end_date
+                ).order_by(SensorReading.timestamp.asc()) # ASC for analysis
+                
+                result = await db.execute(stmt)
+                readings = result.scalars().all()
+                values = [r.value for r in readings] # Already ASC
+                timestamps_iso = [r.timestamp.isoformat() for r in readings]
+                
+            except Exception as e:
+                logger.error(f"Date parsing/query error: {e}")
+                raise HTTPException(status_code=400, detail="Invalid date format")
+        else:
+            # Default: Last 1000 points (Requested update), DESC -> ASC
+            window_size = 1000
+            if data.config:
+                val = 0
+                if isinstance(data.config, dict): val = data.config.get("window_size")
+                else: val = getattr(data.config, "window_size", 0)
+                if val: window_size = val
 
-        stmt = select(SensorReading).where(SensorReading.sensor_id == data.sensor_id).order_by(desc(SensorReading.timestamp)).limit(window_size)
-        result = await db.execute(stmt)
-        readings = result.scalars().all()
-        values = [r.value for r in reversed(readings)]
+            stmt = select(SensorReading).where(SensorReading.sensor_id == data.sensor_id).order_by(desc(SensorReading.timestamp)).limit(window_size)
+            result = await db.execute(stmt)
+            readings = result.scalars().all()
+            # Restore chronological order
+            readings_asc = list(reversed(readings))
+            values = [r.value for r in readings_asc]
+            timestamps_iso = [r.timestamp.isoformat() for r in readings_asc]
         
         if len(values) < 5:
-             # Fallback to empty/mock or error? 
-             # If completely empty, maybe user wants synthetic? But user is asking for DB.
-             # Return error if no data found in DB and no data provided.
-             raise HTTPException(status_code=404, detail="No data found for this sensor in database and no values provided.")
+             # Return valid empty result to avoid 404 error in frontend
+             empty_metrics = AnalysisMetricsExtended(
+                 bias=0.0, slope=0.0, noise_std=0.0, snr_db=0.0, hysteresis=0.0, 
+                 hysteresis_x=[], hysteresis_y=[],
+                 hurst=0.5, hurst_r2=0.0, dfa_scales=[], dfa_fluctuations=[], timestamps=[],
+                 trend=[], residuals=[]
+             )
+             return AnalysisResultExtended(
+                 sensor_id=data.sensor_id,
+                 timestamp=datetime.now().isoformat(),
+                 health_score=0.0,
+                 status="No Data",
+                 metrics=empty_metrics,
+                 diagnosis="No Data Available",
+                 flags=[],
+                 recommendation="Waiting for data ingestion.",
+                 prediction="N/A"
+             )
+    else:
+        # Values provided in payload
+        if data.timestamps:
+            timestamps_iso = data.timestamps
+        else:
+            # Generate dummy timestamps ending now?
+            # Or leave empty? frontend expects them for range selection.
+            # Let's generate synthetic timestamps if missing, to avoid frontend crash on map
+            now = datetime.now()
+            # 1 second interval assumption
+            timestamps_iso = [(now - timedelta(seconds=len(values)-i)).isoformat() for i in range(len(values))]
+            # Need timedelta import
 
     current_analyzer = SensorAnalyzer(config=data.config) if data.config else analyzer
     
     try:
-        # Preprocessing
-        clean_data = current_analyzer.preprocessing(values)
+        # Use centralized analyze method
+        analysis_result = current_analyzer.analyze(values)
         
-        # Calculate Metrics
-        bias = current_analyzer.calc_bias(clean_data)
-        slope = current_analyzer.calc_slope(clean_data)
-        noise_std = float(np.std(clean_data))
-        snr_db = current_analyzer.calc_snr_db(clean_data)
-        hysteresis, hyst_x, hyst_y = current_analyzer.calc_hysteresis(clean_data)
-        hurst, hurst_r2, dfa_scales, dfa_flucts = current_analyzer.calc_dfa(clean_data)
+        metrics_dict = analysis_result["metrics"]
+        # Add timestamps to metrics
+        metrics_dict["timestamps"] = timestamps_iso
         
-        metrics_dict = {
-            "bias": bias, "slope": slope, "noise_std": noise_std, "snr_db": snr_db,
-            "hysteresis": hysteresis, "hysteresis_x": hyst_x, "hysteresis_y": hyst_y,
-            "hurst": hurst, "hurst_r2": hurst_r2, "dfa_scales": dfa_scales, "dfa_fluctuations": dfa_flucts
-        }
+        health = analysis_result["health"]
+        rul_prediction = analysis_result["prediction"]
         
-        health = current_analyzer.get_health_score(metrics_dict)
-        rul_prediction = current_analyzer.calc_rul(clean_data, slope)
+        # Construct Extended Model
+        metrics_obj = AnalysisMetricsExtended(**metrics_dict)
         
-        result_obj = AnalysisResult(
+        result_obj = AnalysisResultExtended(
             sensor_id=data.sensor_id,
             timestamp=datetime.now().isoformat(),
             health_score=health["score"],
             status=health["status"],
             diagnosis=health["diagnosis"],
-            metrics=AnalysisMetrics(**metrics_dict),
+            metrics=metrics_obj,
             flags=health["flags"],
             recommendation=health["recommendation"],
             prediction=rul_prediction
@@ -362,7 +429,16 @@ async def analyze_sensor(data: SensorDataInput, db: AsyncSession = Depends(get_d
         
         # Save result to DB only if we fetched from DB? Or always?
         # Let's save it if it's not a simulation (length > 0)
-        # Assuming if we're calling analyze explicitly, we might want to save it.
+        # However, AnalysisResultDB likely doesn't support storing timestamps inside metrics JSON if the schema is strict?
+        # Actually AnalysisResultDB stores metrics as JSON. Pydantic can dict().
+        # DB saving uses AnalysisResultDB which takes a dict.
+        # But save_analysis_result takes 'AnalysisResult'.
+        # Python is duck-typed enough or Pydantic might work?
+        # save_analysis_result signature: (db: AsyncSession, sensor_id: str, result: AnalysisResult)
+        # If I pass AnalysisResultExtended, it is a subclass, so it should pass type check if runtime.
+        
+        # However, AnalysisResultDB metrics column is likely JSON.
+        # It will store the timestamps in the JSON. This is fine.
         await save_analysis_result(db, data.sensor_id, result_obj)
         
         return result_obj
